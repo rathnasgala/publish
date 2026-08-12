@@ -1,0 +1,119 @@
+name: Release validator and action
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact semver shared by the validator and bundled action release.
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - name: Check out the release tree
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Use the supported publishing runtime
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.x
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Validate release identity and root distribution
+        env:
+          GALA_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = 'refs/heads/main'
+          [[ "$GALA_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$(node -p "require('./v1/validation/package.json').version")" = "$GALA_VERSION"
+          test "$(node -p "require('./action/package.json').version")" = "$GALA_VERSION"
+          cmp --silent action/action.yml action.yml
+          cmp --silent action/dist/index.js dist/index.js
+          cmp --silent action/.github/workflows/publish.yml .github/workflows/publish.yml
+          cmp --silent action/.github/workflows/release-validator.yml .github/workflows/release-validator.yml
+          if git rev-parse --verify "refs/tags/v$GALA_VERSION" >/dev/null 2>&1; then
+            echo "Tag v$GALA_VERSION already exists" >&2
+            exit 1
+          fi
+
+      - name: Verify npm supports trusted publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm_version="$(npm --version)"
+          minimum='11.5.1'
+          if [ "$(printf '%s\n%s\n' "$minimum" "$npm_version" | sort -V | head -n 1)" != "$minimum" ]; then
+            echo "npm $npm_version does not support trusted publishing; require $minimum or later" >&2
+            exit 1
+          fi
+
+      - name: Install exactly the locked dependencies
+        run: npm ci
+
+      - name: Verify the complete release tree
+        run: npm run test:release
+
+      - name: Publish with OIDC provenance
+        run: npm publish --workspace @rathnasgala/content-validation --access public --provenance
+
+      - name: Wait for the immutable validator version to resolve
+        env:
+          GALA_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5 6; do
+            published="$(npm view "@rathnasgala/content-validation@$GALA_VERSION" version 2>/dev/null || true)"
+            if [ "$published" = "$GALA_VERSION" ]; then
+              exit 0
+            fi
+            sleep $((attempt * 5))
+          done
+          echo "Published validator version did not become readable" >&2
+          exit 1
+
+      - name: Rebuild the action against the published validator
+        env:
+          GALA_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_root="$(mktemp -d "$RUNNER_TEMP/gala-release-build.XXXXXX")"
+          cleanup() { rm -rf -- "$release_root"; }
+          trap cleanup EXIT
+          cp -R action/src action/package.json "$release_root/"
+          node - "$release_root/package.json" "$GALA_VERSION" <<'NODE'
+          const fs = require('node:fs');
+          const [file, version] = process.argv.slice(2);
+          const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+          manifest.dependencies['@rathnasgala/content-validation'] = version;
+          fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+          NODE
+          npm install --prefix "$release_root" --ignore-scripts --package-lock-only
+          npm ci --prefix "$release_root" --ignore-scripts
+          npm run --prefix "$release_root" bundle
+          cmp --silent "$release_root/dist/index.js" action/dist/index.js
+          cmp --silent "$release_root/dist/index.js" dist/index.js
+
+      - name: Tag the verified release tree
+        env:
+          GALA_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a "v$GALA_VERSION" -m "Gala publish v$GALA_VERSION"
+          git push origin "refs/tags/v$GALA_VERSION"

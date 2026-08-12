@@ -1,0 +1,357 @@
+name: Gala publish
+
+on:
+  workflow_call:
+    inputs:
+      operation:
+        description: Build, or acknowledge an externally deployed build-only artifact.
+        required: true
+        type: string
+      mode:
+        description: build-only or build-and-deploy.
+        required: true
+        type: string
+      site-id:
+        description: Canonical Gala site ULID.
+        required: true
+        type: string
+      api-base-url:
+        description: HTTPS Gala API origin.
+        required: true
+        type: string
+      output-directory:
+        description: Checkout-relative build output directory.
+        required: true
+        type: string
+      timezone:
+        description: IANA timezone used for date gates.
+        required: true
+        type: string
+      config-path:
+        description: Checkout-relative site configuration path.
+        required: false
+        default: site.config.yml
+        type: string
+      floor-guard-percent:
+        description: Proportional owned-deployment page-loss limit.
+        required: false
+        default: '20'
+        type: string
+      floor-guard-pages:
+        description: Absolute owned-deployment page-loss limit.
+        required: false
+        default: '25'
+        type: string
+      keepalive-threshold-days:
+        description: Keepalive age threshold; must be below 60.
+        required: false
+        default: '50'
+        type: string
+      floor-guard-override-commit-sha:
+        description: Matching SHA confirmation for an in-commit floor-override trailer.
+        required: false
+        default: ''
+        type: string
+      deployed-commit-sha:
+        description: Exact externally deployed SHA; acknowledgement only.
+        required: false
+        default: ''
+        type: string
+      recorded-state-sha:
+        description: Exact managed-state SHA produced after the external deployment.
+        required: false
+        default: ''
+        type: string
+    secrets:
+      site-secret:
+        description: Per-site reconciliation HMAC secret.
+        required: true
+    outputs:
+      outcome:
+        value: ${{ jobs.publish.outputs.outcome }}
+      published-count:
+        value: ${{ jobs.publish.outputs.published-count }}
+      republished-count:
+        value: ${{ jobs.publish.outputs.republished-count }}
+      delisted-count:
+        value: ${{ jobs.publish.outputs.delisted-count }}
+      skipped-count:
+        value: ${{ jobs.publish.outputs.skipped-count }}
+      days-since-last-commit:
+        value: ${{ jobs.publish.outputs.days-since-last-commit }}
+      keepalive-committed:
+        value: ${{ jobs.publish.outputs.keepalive-committed }}
+      floor-guard-overridden:
+        value: ${{ jobs.publish.outputs.floor-guard-overridden }}
+      floor-guard-override-reason:
+        value: ${{ jobs.publish.outputs.floor-guard-override-reason }}
+      floor-guard-lost-pages:
+        value: ${{ jobs.publish.outputs.floor-guard-lost-pages }}
+      validator-version:
+        value: ${{ jobs.publish.outputs.validator-version }}
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    outputs:
+      outcome: ${{ steps.final.outputs.outcome }}
+      published-count: ${{ steps.final.outputs.published-count }}
+      republished-count: ${{ steps.final.outputs.republished-count }}
+      delisted-count: ${{ steps.final.outputs.delisted-count }}
+      skipped-count: ${{ steps.final.outputs.skipped-count }}
+      days-since-last-commit: ${{ steps.final.outputs.days-since-last-commit }}
+      keepalive-committed: ${{ steps.final.outputs.keepalive-committed }}
+      floor-guard-overridden: ${{ steps.final.outputs.floor-guard-overridden }}
+      floor-guard-override-reason: ${{ steps.final.outputs.floor-guard-override-reason }}
+      floor-guard-lost-pages: ${{ steps.final.outputs.floor-guard-lost-pages }}
+      validator-version: ${{ steps.final.outputs.validator-version }}
+    steps:
+      - name: Check out the exact content commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.operation == 'acknowledge-deployment' && inputs.recorded-state-sha || github.sha }}
+
+      - name: Use the action runtime version
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.x
+          package-manager-cache: false
+
+      - name: Install the author repository dependencies
+        run: npm ci
+
+      - name: Validate and build
+        id: primary
+        uses: rathnasgala/publish@v1
+        with:
+          operation: ${{ inputs.operation }}
+          mode: ${{ inputs.mode }}
+          site-id: ${{ inputs.site-id }}
+          site-secret: ${{ secrets.site-secret }}
+          api-base-url: ${{ inputs.api-base-url }}
+          output-directory: ${{ inputs.output-directory }}
+          timezone: ${{ inputs.timezone }}
+          config-path: ${{ inputs.config-path }}
+          floor-guard-percent: ${{ inputs.floor-guard-percent }}
+          floor-guard-pages: ${{ inputs.floor-guard-pages }}
+          keepalive-threshold-days: ${{ inputs.keepalive-threshold-days }}
+          floor-guard-override-commit-sha: ${{ inputs.floor-guard-override-commit-sha }}
+          deployed-commit-sha: ${{ inputs.deployed-commit-sha }}
+          recorded-state-sha: ${{ inputs.recorded-state-sha }}
+          run-id: ${{ github.run_id }}
+          run-attempt: ${{ github.run_attempt }}
+
+      - name: Publish the guarded artifact to gh-pages
+        id: deploy
+        if: inputs.operation == 'build' && inputs.mode == 'build-and-deploy' && steps.primary.outcome == 'success'
+        env:
+          GALA_OUTPUT_DIRECTORY: ${{ inputs.output-directory }}
+          GALA_DEPLOYED_COMMIT_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          workspace="$(realpath -- "$GITHUB_WORKSPACE")"
+          output="$(realpath -- "$GALA_OUTPUT_DIRECTORY")"
+          case "$output" in
+            "$workspace"/*) ;;
+            *) echo "Output directory escapes the checkout" >&2; exit 1 ;;
+          esac
+          test -d "$output"
+          deploy_root="$(mktemp -d "$RUNNER_TEMP/gala-gh-pages.XXXXXX")"
+          cleanup() {
+            git worktree remove --force "$deploy_root" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          git worktree add --detach "$deploy_root" "$GALA_DEPLOYED_COMMIT_SHA"
+          rsync -a --delete --exclude=.git/ "$output/" "$deploy_root/"
+          touch "$deploy_root/.nojekyll"
+          git -C "$deploy_root" config user.name 'github-actions[bot]'
+          git -C "$deploy_root" config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git -C "$deploy_root" add --all
+          git -C "$deploy_root" commit -m "deploy(gala): $GALA_DEPLOYED_COMMIT_SHA"
+          git -C "$deploy_root" push --force origin HEAD:gh-pages
+
+      - name: Reconcile the action-owned deployment
+        id: acknowledge
+        if: inputs.operation == 'build' && inputs.mode == 'build-and-deploy' && steps.deploy.outcome == 'success'
+        uses: rathnasgala/publish@v1
+        with:
+          operation: acknowledge-deployment
+          mode: build-only
+          site-id: ${{ inputs.site-id }}
+          site-secret: ${{ secrets.site-secret }}
+          api-base-url: ${{ inputs.api-base-url }}
+          output-directory: ${{ inputs.output-directory }}
+          timezone: ${{ inputs.timezone }}
+          config-path: ${{ inputs.config-path }}
+          floor-guard-percent: ${{ inputs.floor-guard-percent }}
+          floor-guard-pages: ${{ inputs.floor-guard-pages }}
+          keepalive-threshold-days: ${{ inputs.keepalive-threshold-days }}
+          floor-guard-override-commit-sha: ''
+          deployed-commit-sha: ${{ github.sha }}
+          recorded-state-sha: ${{ github.sha }}
+          run-id: ${{ github.run_id }}
+          run-attempt: ${{ github.run_attempt }}
+
+      - name: Record successful action-owned deployment
+        id: persist
+        if: inputs.operation == 'build' && inputs.mode == 'build-and-deploy' && steps.acknowledge.outcome == 'success'
+        env:
+          GALA_SOURCE_BRANCH: ${{ github.ref_name }}
+          GALA_DEPLOYED_COMMIT_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          state='.gala/build/publication-state.yml'
+          stage='.gala/build/deployment-stage.json'
+          test -f "$state"
+          test ! -L "$state"
+          test -f "$stage"
+          test ! -L "$stage"
+          git check-ref-format --branch "$GALA_SOURCE_BRANCH"
+          assigned_paths_file="$(mktemp "$RUNNER_TEMP/gala-assigned-paths.XXXXXX")"
+          index=''
+          cleanup() {
+            rm -f -- "$assigned_paths_file"
+            if [ -n "$index" ]; then
+              rm -f -- "$index"
+            fi
+          }
+          trap cleanup EXIT
+          node - "$stage" > "$assigned_paths_file" <<'NODE'
+          const { createHash } = require('node:crypto');
+          const { lstatSync, readFileSync } = require('node:fs');
+          const stagePath = process.argv[2];
+          const stage = JSON.parse(readFileSync(stagePath, 'utf8'));
+          if (stage.schemaVersion !== 1 || stage.commitSha !== process.env.GALA_DEPLOYED_COMMIT_SHA
+              || !Array.isArray(stage.assignedContentIds)) {
+            throw new Error('Deployment stage identity assignments are invalid');
+          }
+          const seen = new Set();
+          for (const assigned of stage.assignedContentIds) {
+            if (assigned == null
+                || !/^content\/posts\/[a-z0-9]+(?:-[a-z0-9]+)*\/index\.[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*\.md$/.test(assigned.source)
+                || !/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/.test(assigned.id)
+                || !/^[a-f0-9]{64}$/.test(assigned.fileHash)
+                || seen.has(assigned.source)) {
+              throw new Error('Deployment stage contains an invalid assigned-ID entry');
+            }
+            const metadata = lstatSync(assigned.source);
+            if (!metadata.isFile() || metadata.isSymbolicLink()) {
+              throw new Error(`Assigned-ID source is not a regular file: ${assigned.source}`);
+            }
+            const bytes = readFileSync(assigned.source);
+            if (createHash('sha256').update(bytes).digest('hex') !== assigned.fileHash) {
+              throw new Error(`Assigned-ID source changed after deployment: ${assigned.source}`);
+            }
+            const prefix = bytes.toString('utf8').match(/^\uFEFF?---\r?\nid: ([^\r\n]+)\r?\n/);
+            if (prefix?.[1] !== assigned.id) {
+              throw new Error(`Assigned-ID source no longer contains its deployed ULID: ${assigned.source}`);
+            }
+            seen.add(assigned.source);
+            process.stdout.write(`${assigned.source}\n`);
+          }
+          NODE
+          mapfile -t assigned_paths < "$assigned_paths_file"
+          git fetch --no-tags origin "+refs/heads/$GALA_SOURCE_BRANCH:refs/remotes/origin/$GALA_SOURCE_BRANCH"
+          parent="$(git rev-parse --verify "refs/remotes/origin/$GALA_SOURCE_BRANCH^{commit}")"
+          index="$(mktemp "$RUNNER_TEMP/gala-state-index.XXXXXX")"
+          rm -- "$index"
+          export GIT_INDEX_FILE="$index"
+          git read-tree "$parent^{tree}"
+          blob="$(git hash-object -w -- "$state")"
+          git update-index --add --cacheinfo "100644,$blob,.gala/publication-state.yml"
+          for content_path in "${assigned_paths[@]}"; do
+            deployed_blob="$(git rev-parse "$GALA_DEPLOYED_COMMIT_SHA:$content_path")"
+            parent_blob="$(git rev-parse "$parent:$content_path")"
+            test "$deployed_blob" = "$parent_blob" || {
+              echo "Assigned-ID source moved on the remote branch: $content_path" >&2
+              exit 1
+            }
+            content_blob="$(git hash-object -w -- "$content_path")"
+            git update-index --add --cacheinfo "100644,$content_blob,$content_path"
+          done
+          tree="$(git write-tree)"
+          export GIT_AUTHOR_NAME='github-actions[bot]'
+          export GIT_AUTHOR_EMAIL='41898282+github-actions[bot]@users.noreply.github.com'
+          export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME"
+          export GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+          commit="$(printf '%s\n' 'chore(gala): record successful deployment [skip ci]' | git commit-tree "$tree" -p "$parent")"
+          git push origin "$commit:refs/heads/$GALA_SOURCE_BRANCH"
+
+      - name: Publish final run report
+        id: final
+        if: always()
+        env:
+          GALA_OPERATION: ${{ inputs.operation }}
+          GALA_MODE: ${{ inputs.mode }}
+          GALA_PRIMARY_STEP: ${{ steps.primary.outcome }}
+          GALA_DEPLOY_STEP: ${{ steps.deploy.outcome }}
+          GALA_ACK_STEP: ${{ steps.acknowledge.outcome }}
+          GALA_PERSIST_STEP: ${{ steps.persist.outcome }}
+          GALA_PRIMARY_OUTCOME: ${{ steps.primary.outputs.outcome }}
+          GALA_ACK_OUTCOME: ${{ steps.acknowledge.outputs.outcome }}
+          GALA_PUBLISHED_COUNT: ${{ steps.acknowledge.outputs.published-count || steps.primary.outputs.published-count || '0' }}
+          GALA_REPUBLISHED_COUNT: ${{ steps.acknowledge.outputs.republished-count || steps.primary.outputs.republished-count || '0' }}
+          GALA_DELISTED_COUNT: ${{ steps.acknowledge.outputs.delisted-count || steps.primary.outputs.delisted-count || '0' }}
+          GALA_SKIPPED_COUNT: ${{ steps.acknowledge.outputs.skipped-count || steps.primary.outputs.skipped-count || '0' }}
+          GALA_DAYS_SINCE_COMMIT: ${{ steps.primary.outputs.days-since-last-commit || '0' }}
+          GALA_KEEPALIVE_COMMITTED: ${{ steps.primary.outputs.keepalive-committed || 'false' }}
+          GALA_FLOOR_OVERRIDDEN: ${{ steps.primary.outputs.floor-guard-overridden || 'false' }}
+          GALA_FLOOR_OVERRIDE_REASON: ${{ steps.primary.outputs.floor-guard-override-reason }}
+          GALA_FLOOR_LOST_PAGES: ${{ steps.primary.outputs.floor-guard-lost-pages || '0' }}
+          GALA_VALIDATOR_VERSION: ${{ steps.primary.outputs.validator-version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          outcome="$GALA_PRIMARY_OUTCOME"
+          if [ "$GALA_PRIMARY_STEP" != 'success' ]; then
+            outcome='FAILED'
+          elif [ "$GALA_OPERATION" = 'build' ] && [ "$GALA_MODE" = 'build-and-deploy' ]; then
+            if [ "$GALA_DEPLOY_STEP" != 'success' ] || [ "$GALA_ACK_STEP" != 'success' ] || [ "$GALA_PERSIST_STEP" != 'success' ]; then
+              outcome='FAILED'
+            else
+              outcome="$GALA_ACK_OUTCOME"
+            fi
+          fi
+          case "$outcome" in
+            SUCCESS|PARTIAL|FAILED|NO_OP|SKIPPED_STALE) ;;
+            *) outcome='FAILED' ;;
+          esac
+          {
+            echo "outcome=$outcome"
+            echo "published-count=$GALA_PUBLISHED_COUNT"
+            echo "republished-count=$GALA_REPUBLISHED_COUNT"
+            echo "delisted-count=$GALA_DELISTED_COUNT"
+            echo "skipped-count=$GALA_SKIPPED_COUNT"
+            echo "days-since-last-commit=$GALA_DAYS_SINCE_COMMIT"
+            echo "keepalive-committed=$GALA_KEEPALIVE_COMMITTED"
+            echo "floor-guard-overridden=$GALA_FLOOR_OVERRIDDEN"
+            echo "floor-guard-override-reason=$GALA_FLOOR_OVERRIDE_REASON"
+            echo "floor-guard-lost-pages=$GALA_FLOOR_LOST_PAGES"
+            echo "validator-version=$GALA_VALIDATOR_VERSION"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo '## Gala final result'
+            echo
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Outcome | $outcome |"
+            echo "| Skipped variants | $GALA_SKIPPED_COUNT |"
+            echo "| Published | $GALA_PUBLISHED_COUNT |"
+            echo "| Republished | $GALA_REPUBLISHED_COUNT |"
+            echo "| Delisted | $GALA_DELISTED_COUNT |"
+            echo "| Days since last commit | $GALA_DAYS_SINCE_COMMIT |"
+            echo "| Keepalive committed | $GALA_KEEPALIVE_COMMITTED |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Make skipped content non-green
+        if: always() && steps.final.outputs.skipped-count != '0'
+        shell: bash
+        run: |
+          echo "${{ steps.final.outputs.skipped-count }} post variants failed validation" >&2
+          exit 1

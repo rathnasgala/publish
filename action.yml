@@ -1,0 +1,81 @@
+name: Gala publishing action
+description: Runs Gala signing and reconciliation after workflow-owned validation, build, and deployment.
+inputs:
+  operation:
+    description: build, or acknowledge-deployment. Acknowledgement is valid only with build-only mode.
+    required: true
+  mode:
+    description: build-only or build-and-deploy.
+    required: true
+  site-id:
+    description: Canonical site ULID.
+    required: true
+  site-secret:
+    description: Per-site HMAC secret, consumed only by this bundled JavaScript step.
+    required: true
+  api-base-url:
+    description: HTTPS Gala API origin.
+    required: true
+  output-directory:
+    description: Build output directory. Build-only deployment remains entirely host-owned.
+    required: true
+  timezone:
+    description: IANA timezone used for date-gate evaluation.
+    required: true
+  config-path:
+    description: Checkout-relative site configuration path.
+    required: false
+    default: site.config.yml
+  floor-guard-percent:
+    description: Percentage page loss that trips the owned-deployment guard.
+    required: false
+    default: '20'
+  floor-guard-pages:
+    description: Absolute page loss that trips the owned-deployment guard.
+    required: false
+    default: '25'
+  keepalive-threshold-days:
+    description: Age in days that triggers the empty keepalive commit; must remain below 60.
+    required: false
+    default: '50'
+  floor-guard-override-commit-sha:
+    description: Second-factor SHA for a reasoned Gala-Floor-Override commit trailer; build-and-deploy only.
+    required: false
+  deployed-commit-sha:
+    description: Actually deployed source SHA; signed into reconciliation during acknowledgement.
+    required: false
+  recorded-state-sha:
+    description: Reconstruction SHA containing only managed publication state and manifest-bound ID additions.
+    required: false
+  run-id:
+    description: GitHub workflow run identifier.
+    required: true
+  run-attempt:
+    description: GitHub workflow run attempt.
+    required: true
+outputs:
+  outcome:
+    description: SUCCESS, PARTIAL, FAILED, NO_OP, or SKIPPED_STALE.
+  published-count:
+    description: Articles first published by reconciliation.
+  republished-count:
+    description: Articles reported as republished by reconciliation.
+  delisted-count:
+    description: Articles or variants delisted by reconciliation.
+  skipped-count:
+    description: Repository posts skipped by validation.
+  days-since-last-commit:
+    description: Repository age observed by the keepalive step.
+  keepalive-committed:
+    description: Whether this run created the empty keepalive commit.
+  floor-guard-overridden:
+    description: Whether a reasoned, commit-scoped floor override was exercised.
+  floor-guard-override-reason:
+    description: Auditable reason from the Gala-Floor-Override commit trailer.
+  floor-guard-lost-pages:
+    description: Page-loss magnitude observed by the guard.
+  validator-version:
+    description: Exact @rathnasgala/content-validation version embedded in this action release.
+runs:
+  using: node24
+  main: dist/index.js
