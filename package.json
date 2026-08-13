@@ -6,6 +6,7 @@
     "v1/validation"
   ],
   "scripts": {
-    "test:release": "npm test --workspace @rathnasgala/content-validation && npm test --workspace @rathnasgala/publish-action && npm run lint --workspace @rathnasgala/content-validation && npm run lint --workspace @rathnasgala/publish-action && npm run bundle:check --workspace @rathnasgala/publish-action"
+    "test:release": "npm test --workspace @rathnasgala/content-validation && npm test --workspace @rathnasgala/publish-action && npm run lint --workspace @rathnasgala/content-validation && npm run lint --workspace @rathnasgala/publish-action && npm run bundle:check --workspace @rathnasgala/publish-action",
+    "push": "node action/scripts/push.js"
   }
 }

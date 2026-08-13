@@ -5,7 +5,9 @@ import path from 'node:path';
 
 const root = path.resolve(import.meta.dirname, '..');
 const workspaceRoot = path.resolve(root, '..');
+const validatorRoot = path.join(workspaceRoot, 'v1', 'validation');
 const committed = await readFile(path.join(root, 'dist', 'index.js'));
+const writeBundle = process.argv.slice(2).includes('--write');
 
 if (Number(process.versions.node.split('.')[0]) !== 24) {
   throw new Error('Action bundle reproducibility must be checked with Node 24');
@@ -28,9 +30,7 @@ try {
   const buildRoot = path.join(temporary, 'build');
   await mkdir(packRoot);
   await mkdir(buildRoot);
-  await execute('npm', [
-    'pack', '--workspace', '@rathnasgala/content-validation', '--pack-destination', packRoot
-  ], workspaceRoot);
+  await execute('npm', ['pack', '--pack-destination', packRoot], validatorRoot);
   const archives = (await readdir(packRoot)).filter((entry) => entry.endsWith('.tgz'));
   if (archives.length !== 1) {
     throw new Error(`Expected one validator package archive, found ${archives.length}`);
@@ -45,7 +45,10 @@ try {
   await execute('npm', ['ci', '--ignore-scripts'], buildRoot);
   await execute('npm', ['run', 'bundle'], buildRoot);
   const rebuilt = await readFile(path.join(buildRoot, 'dist', 'index.js'));
-  if (!committed.equals(rebuilt)) {
+  if (writeBundle) {
+    await writeFile(path.join(root, 'dist', 'index.js'), rebuilt);
+    await writeFile(path.join(workspaceRoot, 'dist', 'index.js'), rebuilt);
+  } else if (!committed.equals(rebuilt)) {
     throw new Error('Committed dist/index.js differs from a clean lockfile-based rebuild');
   }
 } finally {

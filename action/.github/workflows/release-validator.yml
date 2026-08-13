@@ -134,7 +134,7 @@ jobs:
             exit 1
           }
 
-      - name: Tag the verified release tree
+      - name: Tag the verified release tree and advance the v1 channel
         env:
           GALA_VERSION: ${{ inputs.version }}
         shell: bash
@@ -143,4 +143,5 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git tag -a "v$GALA_VERSION" -m "Gala publish v$GALA_VERSION"
-          git push origin "refs/tags/v$GALA_VERSION"
+          git tag -f v1 "$GITHUB_SHA"
+          git push --atomic origin "refs/tags/v$GALA_VERSION" "+refs/tags/v1"

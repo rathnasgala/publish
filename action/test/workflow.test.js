@@ -1,6 +1,53 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+
+const pushScript = await readFile(new URL('../scripts/push.js', import.meta.url), 'utf8');
+const pushScriptPath = fileURLToPath(new URL('../scripts/push.js', import.meta.url));
+const rootPackage = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
+const rootGitignore = await readFile(new URL('../../.gitignore', import.meta.url), 'utf8');
+
+test('push validates, increments both release artifacts, commits all files, and dispatches tag creation', () => {
+  assert.equal(rootPackage.scripts.push, 'node action/scripts/push.js');
+  const install = pushScript.indexOf("[npmExecutable, '--prefix', '.', 'ci', '--ignore-scripts']");
+  const firstValidation = pushScript.indexOf('validateRelease();');
+  const versionWrite = pushScript.indexOf('validator.version = version');
+  const bundle = pushScript.indexOf("'run', 'bundle:write']");
+  const secondValidation = pushScript.lastIndexOf('validateRelease();');
+  const add = pushScript.indexOf("['add', '.']");
+  const commit = pushScript.indexOf("['commit', '-m', commitMessage]");
+  const push = pushScript.indexOf("['push', 'origin', 'HEAD']");
+  const dispatch = pushScript.indexOf("['workflow', 'run', 'release-validator.yml'");
+  assert.ok([install, firstValidation, versionWrite, bundle, secondValidation, add, commit, push, dispatch]
+    .every((index) => index >= 0));
+  assert.ok(install < firstValidation);
+  assert.ok(firstValidation < versionWrite);
+  assert.ok(versionWrite < bundle);
+  assert.ok(bundle < secondValidation);
+  assert.ok(secondValidation < add);
+  assert.ok(add < commit);
+  assert.ok(commit < push);
+  assert.ok(push < dispatch);
+  assert.doesNotMatch(pushScript, /git', \['tag'/);
+  assert.match(pushScript, /npmExecutable, '--prefix', 'v1\/validation', 'test'/);
+  assert.match(pushScript, /'node', npmExecutable, '--prefix', 'action', 'run', 'bundle:check'/);
+  assert.doesNotMatch(pushScript, /copyFileSync/);
+  assert.match(rootGitignore, /^node_modules\/$/m);
+  assert.match(pushScript, /originalBytes/);
+  assert.match(pushScript, /catch \(error\)[\s\S]+writeFileSync\(file, bytes\)/);
+});
+
+test('push requires exactly one non-empty commit message before changing release state', () => {
+  for (const args of [[], [''], ['one', 'two']]) {
+    const result = spawnSync(process.execPath, [pushScriptPath, ...args], {
+      encoding: 'utf8', shell: false
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Usage: npm run push -- "commit message"/);
+  }
+});
 
 const source = await readFile(
   new URL('../.github/workflows/publish.yml', import.meta.url),
@@ -71,7 +118,7 @@ test('reporting is unconditional and partial results are not overwritten by a gr
   assert.match(source, /exit 1/);
 });
 
-test('release publishes or integrity-verifies the validator before registry-backed bundle verification and tagging', () => {
+test('release publishes or integrity-verifies before atomically tagging the immutable version and v1 channel', () => {
   const publish = release.indexOf('Publish with OIDC provenance');
   const registryBuild = release.indexOf('Rebuild the action against the published validator');
   const tag = release.indexOf('Tag the verified release tree');
@@ -86,7 +133,9 @@ test('release publishes or integrity-verifies the validator before registry-back
   assert.match(release, /Registry-backed bundle differs from dist\/index\.js/);
   assert.match(release, /tail -n \+2 action\.yml \| cmp --silent action\/action\.yml -/);
   assert.match(release, /grep -Fqx '# Gala publish distribution' README\.md/);
-  assert.match(release, /git push origin "refs\/tags\/v\$GALA_VERSION"/);
+  assert.match(release, /git tag -a "v\$GALA_VERSION"/);
+  assert.match(release, /git tag -f v1 "\$GITHUB_SHA"/);
+  assert.match(release, /git push --atomic origin "refs\/tags\/v\$GALA_VERSION" "\+refs\/tags\/v1"/);
 });
 
 test('all release-owned third-party actions are immutable commit pins', () => {

@@ -7,6 +7,9 @@ import test from 'node:test';
 import { promisify } from 'node:util';
 
 const actionRoot = path.resolve(import.meta.dirname, '..');
+const validatorVersion = JSON.parse(
+  await readFile(path.resolve(actionRoot, '../v1/validation/package.json'), 'utf8')
+).version;
 const siteId = '01K00000000000000000000010';
 const commitSha = 'a'.repeat(40);
 const secret = '0123456789abcdef0123456789abcdef';
@@ -15,7 +18,7 @@ const execFileAsync = promisify(execFile);
 test('committed bundle contains the validator and executes the public contract', async () => {
   const bundle = await readFile(path.join(actionRoot, 'dist', 'index.js'), 'utf8');
   assert.match(bundle, /reconciliation-envelope/);
-  assert.match(bundle, /0\.0\.2/);
+  assert.match(bundle, new RegExp(validatorVersion.replaceAll('.', '\\.')));
 
   const inputs = {
     operation: 'build',
@@ -61,7 +64,7 @@ test('committed bundle contains the validator and executes the public contract',
   });
   assert.equal(result.outcome, 'PARTIAL');
   assert.equal(outputs.get('skipped-count'), 1);
-  assert.equal(outputs.get('validator-version'), '0.0.2');
+  assert.equal(outputs.get('validator-version'), validatorVersion);
   assert.deepEqual(secrets, [secret]);
   assert.equal(JSON.stringify([...outputs]).includes(secret), false);
 });

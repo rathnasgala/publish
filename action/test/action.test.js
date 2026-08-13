@@ -259,6 +259,22 @@ test('acknowledgement pins no-op, stale, and deferred reconciliation outcomes', 
   assert.ok(deferred.calls.includes('warn'));
 });
 
+test('acknowledgement maps the Java reconciliation count contract into action outputs', async () => {
+  const fixture = adapters({
+    sendReconciliation: async () => ({
+      noOp: false, published: 4, republished: 3, delisted: 2
+    })
+  });
+  const result = await runAction(input({
+    operation: ActionOperation.ACKNOWLEDGE_DEPLOYMENT
+  }), fixture.value);
+
+  assert.equal(result.outcome, 'SUCCESS');
+  assert.equal(result.publishedCount, 4);
+  assert.equal(result.republishedCount, 3);
+  assert.equal(result.delistedCount, 2);
+});
+
 test('requires the in-commit reason and SHA together and reports an exercised override as partial', async () => {
   let transmittedOverride;
   const fixture = adapters({
@@ -314,7 +330,7 @@ test('acknowledgement preserves a staged floor override as PARTIAL', async () =>
       floorGuardOverride: override
     }),
     sendReconciliation: async () => ({
-      publishedCount: 0, republishedCount: 0, delistedCount: 0
+      published: 0, republished: 0, delisted: 0
     })
   });
   const result = await runAction(input({

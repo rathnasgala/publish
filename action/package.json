@@ -1,12 +1,13 @@
 {
   "name": "@rathnasgala/publish-action",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "private": true,
   "type": "module",
   "scripts": {
     "test": "node --test",
-    "lint": "node --check src/content-hash.js && node --check src/contract.js && node --check src/floor-guard.js && node --check src/envelope.js && node --check src/transport.js && node --check src/orchestrator.js && node --check src/local.js && node --check src/hosted.js && node --check src/fixture-cli.js && node --check src/index.js && node --check scripts/check-bundle.js && node --check scripts/stage-release-tree.js && node --check test/action.test.js && node --check test/contract.test.js && node --check test/floor-guard.test.js && node --check test/hosted.test.js && node --check test/workflow.test.js && node --check test/bundle.test.js && node --check test/release-tree.test.js",
+    "lint": "node --check src/content-hash.js && node --check src/contract.js && node --check src/floor-guard.js && node --check src/envelope.js && node --check src/transport.js && node --check src/orchestrator.js && node --check src/local.js && node --check src/hosted.js && node --check src/fixture-cli.js && node --check src/index.js && node --check scripts/check-bundle.js && node --check scripts/push.js && node --check scripts/stage-release-tree.js && node --check test/action.test.js && node --check test/contract.test.js && node --check test/floor-guard.test.js && node --check test/hosted.test.js && node --check test/workflow.test.js && node --check test/bundle.test.js && node --check test/release-tree.test.js",
     "bundle": "node -e \"if (Number(process.versions.node.split('.')[0]) !== 24) throw new Error('Action bundles must be built with Node 24')\" && ncc build src/index.js -o dist --minify",
+    "bundle:write": "node scripts/check-bundle.js --write",
     "bundle:check": "node scripts/check-bundle.js"
   },
   "engines": {
@@ -14,7 +15,7 @@
   },
   "dependencies": {
     "@actions/core": "3.0.1",
-    "@rathnasgala/content-validation": "0.0.2"
+    "@rathnasgala/content-validation": "0.0.3"
   },
   "devDependencies": {
     "@vercel/ncc": "0.44.1"

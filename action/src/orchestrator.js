@@ -149,9 +149,9 @@ export async function runAction(input, adapters) {
 
 function reconciliationCounts(result) {
   return {
-    publishedCount: result?.publishedCount ?? 0,
-    republishedCount: result?.republishedCount ?? 0,
-    delistedCount: result?.delistedCount ?? 0
+    publishedCount: result?.published ?? 0,
+    republishedCount: result?.republished ?? 0,
+    delistedCount: result?.delisted ?? 0
   };
 }
 
