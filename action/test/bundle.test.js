@@ -12,7 +12,7 @@ const secret = '0123456789abcdef0123456789abcdef';
 test('committed bundle contains the validator and executes the public contract', async () => {
   const bundle = await readFile(path.join(actionRoot, 'dist', 'index.js'), 'utf8');
   assert.match(bundle, /reconciliation-envelope/);
-  assert.match(bundle, /0\.0\.1/);
+  assert.match(bundle, /0\.0\.2/);
 
   const inputs = {
     operation: 'build',
@@ -58,7 +58,7 @@ test('committed bundle contains the validator and executes the public contract',
   });
   assert.equal(result.outcome, 'PARTIAL');
   assert.equal(outputs.get('skipped-count'), 1);
-  assert.equal(outputs.get('validator-version'), '0.0.1');
+  assert.equal(outputs.get('validator-version'), '0.0.2');
   assert.deepEqual(secrets, [secret]);
   assert.equal(JSON.stringify([...outputs]).includes(secret), false);
 });

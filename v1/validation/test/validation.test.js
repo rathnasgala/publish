@@ -9,6 +9,7 @@ import {
   findArticleIdentityConflicts,
   findDuplicateVariants,
   normalizeSiteConfigurationOptions,
+  normalizePathPrefix,
   parseFrontmatter,
   PublicationState,
   resolveEffectivePost,
@@ -301,6 +302,9 @@ test('rejects invalid site configuration values before persistence', () => {
 });
 
 test('resolves lifecycle, canonical language, URL, and canonical exactly once', () => {
+  assert.equal(normalizePathPrefix(''), '/');
+  assert.equal(normalizePathPrefix('/'), '/');
+  assert.equal(normalizePathPrefix('/notes/'), '/notes');
   assert.deepEqual(resolveEffectivePost({
     data: { language: 'fr-ca', publishAfterDate: today },
     slug: 'hello-world',
@@ -329,6 +333,13 @@ test('resolves lifecycle, canonical language, URL, and canonical exactly once', 
     today,
     canonicalBaseUrl: 'https://example.com'
   }).canonicalUrl, 'https://canonical.example/post');
+  assert.throws(() => resolveEffectivePost({
+    data: { language: 'en', publishAfterDate: today },
+    slug: 'post',
+    today,
+    canonicalBaseUrl: 'https://example.com/notes',
+    pathPrefix: '/notes'
+  }), /pathPrefix/);
 });
 
 test('validates per-language first-publication state', () => {

@@ -1,6 +1,6 @@
 {
   "name": "@rathnasgala/publish-action",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "type": "module",
   "scripts": {
@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@actions/core": "3.0.1",
-    "@rathnasgala/content-validation": "0.0.1"
+    "@rathnasgala/content-validation": "0.0.2"
   },
   "devDependencies": {
     "@vercel/ncc": "0.44.1"

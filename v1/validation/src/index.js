@@ -263,6 +263,26 @@ function absoluteHttpsUrl(value, field) {
   return parsed;
 }
 
+function canonicalBaseOrigin(value) {
+  let supplied;
+  try {
+    supplied = new URL(value);
+  } catch {
+    throw new TypeError('canonicalBaseUrl must be an absolute URL');
+  }
+  const parsed = absoluteHttpsUrl(value, 'canonicalBaseUrl');
+  if (parsed.pathname !== '/' || supplied.search !== '' || supplied.hash !== '') {
+    throw new TypeError('canonicalBaseUrl must be an origin only; put the URL path in pathPrefix');
+  }
+  return parsed.origin;
+}
+
+export function normalizePathPrefix(value = '/') {
+  if (value === '') return '/';
+  const segments = pathSegments(value, 'pathPrefix');
+  return segments.length === 0 ? '/' : `/${segments.join('/')}`;
+}
+
 function pathSegments(value, field) {
   if (typeof value !== 'string' || value.includes('?') || value.includes('#')) {
     throw new TypeError(`${field} must be a URL path without query or fragment`);
@@ -283,9 +303,9 @@ export function resolveEffectivePost({ data, slug, today, canonicalBaseUrl, path
   }
   const language = canonicalizeLanguageTag(data.language);
   const relativeUrl = `/${encodeURIComponent(language)}/${encodeURIComponent(slug)}/`;
-  const base = absoluteHttpsUrl(canonicalBaseUrl, 'canonicalBaseUrl');
+  const base = new URL(canonicalBaseOrigin(canonicalBaseUrl));
   const segments = [
-    ...pathSegments(pathPrefix, 'pathPrefix'),
+    ...pathSegments(normalizePathPrefix(pathPrefix), 'pathPrefix'),
     ...pathSegments(relativeUrl, 'relativeUrl')
   ].map(encodeURIComponent);
   base.pathname = `/${segments.join('/')}/`;
@@ -902,7 +922,10 @@ function siteLocation(config) {
       || config.schemaVersion !== 1 || config.hosting == null) {
     throw new TypeError('Unsupported site.config.yml schema');
   }
-  return { canonicalBaseUrl: config.hosting.canonicalBaseUrl, pathPrefix: config.hosting.pathPrefix ?? '/' };
+  return {
+    canonicalBaseUrl: canonicalBaseOrigin(config.hosting.canonicalBaseUrl),
+    pathPrefix: normalizePathPrefix(config.hosting.pathPrefix ?? '/')
+  };
 }
 
 export async function regenerateBuildManifest({
