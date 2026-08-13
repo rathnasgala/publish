@@ -3,7 +3,6 @@
   "private": true,
   "workspaces": [
     "action",
-    "cli",
     "v1/validation"
   ],
   "scripts": {
