@@ -1,0 +1,12 @@
+[
+  { "input": "en-GB", "valid": true, "canonical": "en-GB" },
+  { "input": "en-gb", "valid": true, "canonical": "en-GB" },
+  { "input": "EN-gb", "valid": true, "canonical": "en-GB" },
+  { "input": "iw", "valid": true, "canonical": "he" },
+  { "input": "in", "valid": true, "canonical": "id" },
+  { "input": "ji", "valid": true, "canonical": "yi" },
+  { "input": "sh", "valid": true, "canonical": "sr-Latn" },
+  { "input": "mo", "valid": true, "canonical": "ro" },
+  { "input": "not_a_language", "valid": false, "canonical": null },
+  { "input": "en--GB", "valid": false, "canonical": null }
+]

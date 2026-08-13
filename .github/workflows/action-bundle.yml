@@ -1,0 +1,38 @@
+name: Action bundle
+
+on:
+  pull_request:
+    paths:
+      - action/**
+      - v1/validation/**
+      - package.json
+      - package-lock.json
+      - .github/workflows/action-bundle.yml
+  push:
+    paths:
+      - action/**
+      - v1/validation/**
+      - package.json
+      - package-lock.json
+      - .github/workflows/action-bundle.yml
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.x
+          package-manager-cache: false
+      - run: npm ci
+      - name: Assert action is registry-ineligible
+        run: node -e "const p=require('./action/package.json'); if(p.private !== true) process.exit(1)"
+      - run: npm test --workspace @rathnasgala/content-validation
+      - run: npm test --workspace @rathnasgala/publish-action
+      - run: npm run lint --workspace @rathnasgala/content-validation
+      - run: npm run lint --workspace @rathnasgala/publish-action
+      - run: npm run bundle:check --workspace @rathnasgala/publish-action

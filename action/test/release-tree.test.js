@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, readdir, rm, symlink } from 'node:fs/promises';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -34,6 +34,14 @@ test('stages the runtime and reusable workflow at GitHub-resolvable root paths',
     await readFile(path.join(destination, '.github/workflows/release-validator.yml'));
     await readFile(path.join(destination, 'v1/validation/package.json'));
     await readFile(path.join(destination, 'action/package.json'));
+    assert.deepEqual(
+      JSON.parse(await readFile(path.join(destination, 'package.json'), 'utf8')).workspaces,
+      ['action', 'v1/validation']
+    );
+    const install = spawnSync('npm', ['ci', '--ignore-scripts'], {
+      cwd: destination, encoding: 'utf8'
+    });
+    assert.equal(install.status, 0, install.stderr);
     assert.match(await readFile(path.join(destination, 'README.md'), 'utf8'), /Do not edit/);
   } finally {
     await rm(destination, { recursive: true, force: true });

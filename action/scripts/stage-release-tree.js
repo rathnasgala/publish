@@ -67,17 +67,33 @@ async function generatedYaml(source, target) {
   await writeFile(target, `# GENERATED DISTRIBUTION COPY — edit the monorepo source, not this file.\n${content}`);
 }
 
+async function generatedWorkspaceManifests() {
+  const packageJson = JSON.parse(await readFile(path.join(workspace, 'package.json'), 'utf8'));
+  packageJson.workspaces = ['action', 'v1/validation'];
+  await writeFile(
+    path.join(destination, 'package.json'),
+    `${JSON.stringify(packageJson, null, 2)}\n`
+  );
+  const packageLock = JSON.parse(await readFile(path.join(workspace, 'package-lock.json'), 'utf8'));
+  packageLock.packages[''].workspaces = ['action', 'v1/validation'];
+  delete packageLock.packages.cli;
+  delete packageLock.packages['node_modules/@rathnasgala/cli'];
+  await writeFile(
+    path.join(destination, 'package-lock.json'),
+    `${JSON.stringify(packageLock, null, 2)}\n`
+  );
+}
+
 await requireEmptyDirectory(destination);
 
 for (const relative of [
-  'package.json',
-  'package-lock.json',
   'action',
   'v1/validation',
   '.github/workflows/action-bundle.yml'
 ]) {
   await copy(path.join(workspace, relative), path.join(destination, relative));
 }
+await generatedWorkspaceManifests();
 
 await copy(
   path.join(workspace, 'action/RELEASE_README.md'),

@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gala.dev/contracts/reconciliation-envelope.schema.json",
+  "title": "Gala reconciliation envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "commitSha",
+    "runId",
+    "runAttempt",
+    "emittedAt",
+    "runStatus",
+    "daysSinceLastCommit",
+    "articles"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "commitSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "runId": { "type": "integer", "minimum": 1 },
+    "runAttempt": { "type": "integer", "minimum": 1 },
+    "emittedAt": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]{1,9})?Z$"
+    },
+    "runStatus": { "enum": ["SUCCESS", "FAILED"] },
+    "daysSinceLastCommit": { "type": "integer", "minimum": 0 },
+    "floorGuardOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["previousPageCount", "currentPageCount", "lostPages", "reason"],
+      "properties": {
+        "previousPageCount": { "type": "integer", "minimum": 1 },
+        "currentPageCount": { "type": "integer", "minimum": 0 },
+        "lostPages": { "type": "integer", "minimum": 1 },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 500 }
+      }
+    },
+    "articles": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/article" }
+    }
+  },
+  "$defs": {
+    "ulid": {
+      "type": "string",
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+    },
+    "article": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "slug", "variants"],
+      "properties": {
+        "id": { "$ref": "#/$defs/ulid" },
+        "slug": {
+          "type": "string",
+          "maxLength": 80,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "variants": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/variant" }
+        }
+      }
+    },
+    "variant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "language",
+        "state",
+        "contentHash",
+        "title",
+        "tags",
+        "canonicalUrl",
+        "frontmatter"
+      ],
+      "properties": {
+        "language": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 35,
+          "pattern": "^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$"
+        },
+        "state": { "enum": ["PUBLISHED", "TOMBSTONED"] },
+        "contentHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "title": { "type": "string", "minLength": 1 },
+        "description": { "type": ["string", "null"] },
+        "tags": {
+          "type": "array",
+          "maxItems": 8,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "coverImage": { "type": ["string", "null"] },
+        "canonicalUrl": {
+          "type": "string",
+          "pattern": "^https://(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?::[0-9]{1,5})?(?:/[^\\s]*)?$"
+        },
+        "frontmatter": { "type": "object", "additionalProperties": true }
+      }
+    }
+  }
+}

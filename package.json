@@ -1,22 +1,12 @@
 {
-  "name": "@rathnasgala/publish-action",
-  "version": "0.0.1",
+  "name": "gala-v1-workspace",
   "private": true,
-  "type": "module",
+  "workspaces": [
+    "action",
+    "cli",
+    "v1/validation"
+  ],
   "scripts": {
-    "test": "node --test",
-    "lint": "node --check src/content-hash.js && node --check src/contract.js && node --check src/floor-guard.js && node --check src/envelope.js && node --check src/transport.js && node --check src/orchestrator.js && node --check src/local.js && node --check src/hosted.js && node --check src/fixture-cli.js && node --check src/index.js && node --check scripts/check-bundle.js && node --check scripts/stage-release-tree.js && node --check test/action.test.js && node --check test/contract.test.js && node --check test/floor-guard.test.js && node --check test/hosted.test.js && node --check test/workflow.test.js && node --check test/bundle.test.js && node --check test/release-tree.test.js",
-    "bundle": "ncc build src/index.js -o dist --minify",
-    "bundle:check": "node scripts/check-bundle.js"
-  },
-  "engines": {
-    "node": ">=20"
-  },
-  "dependencies": {
-    "@actions/core": "3.0.1",
-    "@rathnasgala/content-validation": "0.0.1"
-  },
-  "devDependencies": {
-    "@vercel/ncc": "0.44.1"
+    "test:release": "npm test --workspace @rathnasgala/content-validation && npm test --workspace @rathnasgala/publish-action && npm run lint --workspace @rathnasgala/content-validation && npm run lint --workspace @rathnasgala/publish-action && npm run bundle:check --workspace @rathnasgala/publish-action"
   }
 }

@@ -1,0 +1,32 @@
+{
+  "name": "@rathnasgala/content-validation",
+  "version": "0.0.1",
+  "private": false,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.js",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "test": "node --test",
+    "lint": "node --check src/index.js && node --check src/reconciliation-contract.js && node --check test/reconciliation-contract.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rathnasgala/publish.git",
+    "directory": "v1/validation"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "dependencies": {
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "ulid": "3.0.2",
+    "yaml": "2.9.0"
+  }
+}

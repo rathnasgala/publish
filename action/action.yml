@@ -1,4 +1,3 @@
-# GENERATED DISTRIBUTION COPY — edit the monorepo source, not this file.
 name: Gala publishing action
 description: Runs Gala signing and reconciliation after workflow-owned validation, build, and deployment.
 inputs:
