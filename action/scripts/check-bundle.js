@@ -8,6 +8,11 @@ const root = path.resolve(import.meta.dirname, '..');
 const require = createRequire(import.meta.url);
 const ncc = require.resolve('@vercel/ncc/dist/ncc/cli.js');
 const committed = await readFile(path.join(root, 'dist', 'index.js'));
+
+if (Number(process.versions.node.split('.')[0]) !== 24) {
+  throw new Error('Action bundle reproducibility must be checked with Node 24');
+}
+
 const temporary = await mkdtemp(path.join(tmpdir(), 'gala-action-bundle-'));
 
 function execute(command, args) {
