@@ -34,6 +34,8 @@ test('workflow uses the published bundle and keeps deployment out of the signing
   assert.equal((source.match(/uses: rathnasgala\/publish@v1/g) ?? []).length, 2);
   assert.doesNotMatch(source, /uses: \.\//);
   assert.match(source, /Publish the guarded artifact to gh-pages/);
+  assert.match(source, /rsync -a --delete --exclude=\/\.git "\$output\/" "\$deploy_root\/"/);
+  assert.doesNotMatch(source, /--exclude=\.git\//);
   assert.match(source, /git -C "\$deploy_root" push --force origin HEAD:gh-pages/);
   assert.match(source, /operation: acknowledge-deployment\n          mode: build-only/);
   assert.match(source, /ref: \$\{\{ inputs\.operation == 'acknowledge-deployment' && inputs\.recorded-state-sha/);

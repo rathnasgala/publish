@@ -167,7 +167,7 @@ jobs:
           }
           trap cleanup EXIT
           git worktree add --detach "$deploy_root" "$GALA_DEPLOYED_COMMIT_SHA"
-          rsync -a --delete --exclude=.git/ "$output/" "$deploy_root/"
+          rsync -a --delete --exclude=/.git "$output/" "$deploy_root/"
           touch "$deploy_root/.nojekyll"
           git -C "$deploy_root" config user.name 'github-actions[bot]'
           git -C "$deploy_root" config user.email '41898282+github-actions[bot]@users.noreply.github.com'
