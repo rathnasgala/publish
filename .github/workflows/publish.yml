@@ -173,7 +173,7 @@ jobs:
           git -C "$deploy_root" config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git -C "$deploy_root" add --all
           git -C "$deploy_root" commit -m "deploy(gala): $GALA_DEPLOYED_COMMIT_SHA"
-          git -C "$deploy_root" push --force origin HEAD:gh-pages
+          git -C "$deploy_root" push --force origin HEAD:refs/heads/gh-pages
 
       - name: Reconcile the action-owned deployment
         id: acknowledge
