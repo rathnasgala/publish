@@ -1,4 +1,4 @@
-import { cp, mkdir, readFile, rm, stat } from 'node:fs/promises';
+import { cp, lstat, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const workspace = path.resolve(import.meta.dirname, '../..');
@@ -7,7 +7,33 @@ const destination = process.argv[2] == null ? null : path.resolve(process.argv[2
 if (destination == null) {
   throw new Error('Usage: node action/scripts/stage-release-tree.js <empty-destination>');
 }
-if (destination === workspace || destination.startsWith(`${workspace}${path.sep}`)) {
+async function canonicalProspectivePath(target) {
+  const suffix = [];
+  let ancestor = target;
+  while (true) {
+    try {
+      const metadata = await lstat(ancestor);
+      if (ancestor === target && metadata.isSymbolicLink()) {
+        throw new Error('Release destination must not be a symbolic link');
+      }
+      return path.join(await realpath(ancestor), ...suffix);
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+      const parent = path.dirname(ancestor);
+      if (parent === ancestor) throw error;
+      suffix.unshift(path.basename(ancestor));
+      ancestor = parent;
+    }
+  }
+}
+
+const canonicalWorkspace = await realpath(workspace);
+const canonicalDestination = await canonicalProspectivePath(destination);
+const workspaceRelative = path.relative(canonicalWorkspace, canonicalDestination);
+if (workspaceRelative === ''
+    || (!workspaceRelative.startsWith(`..${path.sep}`)
+      && workspaceRelative !== '..'
+      && !path.isAbsolute(workspaceRelative))) {
   throw new Error('Release destination must be outside the source workspace');
 }
 
@@ -28,8 +54,17 @@ async function copy(source, target) {
   await cp(source, target, {
     recursive: true,
     dereference: false,
-    filter: (candidate) => !candidate.split(path.sep).includes('node_modules')
+    filter: (candidate) => {
+      const segments = candidate.split(path.sep);
+      return !segments.includes('node_modules') && !segments.includes('.git');
+    }
   });
+}
+
+async function generatedYaml(source, target) {
+  const content = await readFile(source, 'utf8');
+  await mkdir(path.dirname(target), { recursive: true });
+  await writeFile(target, `# GENERATED DISTRIBUTION COPY — edit the monorepo source, not this file.\n${content}`);
 }
 
 await requireEmptyDirectory(destination);
@@ -45,18 +80,19 @@ for (const relative of [
 }
 
 await copy(
-  path.join(workspace, 'action/action.yml'),
-  path.join(destination, 'action.yml')
+  path.join(workspace, 'action/RELEASE_README.md'),
+  path.join(destination, 'README.md')
 );
+await generatedYaml(path.join(workspace, 'action/action.yml'), path.join(destination, 'action.yml'));
 await copy(
   path.join(workspace, 'action/dist'),
   path.join(destination, 'dist')
 );
-await copy(
+await generatedYaml(
   path.join(workspace, 'action/.github/workflows/publish.yml'),
   path.join(destination, '.github/workflows/publish.yml')
 );
-await copy(
+await generatedYaml(
   path.join(workspace, 'action/.github/workflows/release-validator.yml'),
   path.join(destination, '.github/workflows/release-validator.yml')
 );
@@ -67,7 +103,10 @@ const [sourceAction, releasedAction, sourceBundle, releasedBundle] = await Promi
   readFile(path.join(workspace, 'action/dist/index.js')),
   readFile(path.join(destination, 'dist/index.js'))
 ]);
-if (!sourceAction.equals(releasedAction) || !sourceBundle.equals(releasedBundle)) {
+const generatedHeader = Buffer.from('# GENERATED DISTRIBUTION COPY — edit the monorepo source, not this file.\n');
+if (!releasedAction.subarray(generatedHeader.length).equals(sourceAction)
+    || !releasedAction.subarray(0, generatedHeader.length).equals(generatedHeader)
+    || !sourceBundle.equals(releasedBundle)) {
   await rm(destination, { recursive: true, force: true });
   throw new Error('Staged runtime bytes differ from the verified action source');
 }

@@ -75,8 +75,11 @@ test('release publishes the validator before registry-backed bundle verification
   const tag = release.indexOf('Tag the verified release tree');
   assert.ok(publish > 0 && registryBuild > publish && tag > registryBuild);
   assert.match(release, /npm publish --workspace @rathnasgala\/content-validation --access public --provenance/);
+  assert.match(release, /^    environment: npm-validator-release$/m);
   assert.match(release, /npm view "@rathnasgala\/content-validation@\$GALA_VERSION" version/);
   assert.match(release, /cmp --silent "\$release_root\/dist\/index\.js" action\/dist\/index\.js/);
+  assert.match(release, /tail -n \+2 action\.yml \| cmp --silent action\/action\.yml -/);
+  assert.match(release, /grep -Fqx '# Gala publish distribution' README\.md/);
   assert.match(release, /git push origin "refs\/tags\/v\$GALA_VERSION"/);
 });
 

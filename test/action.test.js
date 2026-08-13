@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -10,7 +10,11 @@ import { markdownBodyHash } from '../src/content-hash.js';
 import { createReconciliationEnvelope } from '../src/envelope.js';
 import { ActionOperation, BuildMode, runAction } from '../src/orchestrator.js';
 import { runLocalFixture } from '../src/local.js';
-import { ReconciliationTransportError, sendReconciliation } from '../src/transport.js';
+import {
+  ReconciliationTransportError,
+  sendReconciliation,
+  signReconciliationBody
+} from '../src/transport.js';
 
 const SITE = '01K00000000000000000000010';
 const ARTICLE = '01K00000000000000000000000';
@@ -59,6 +63,21 @@ test('hashes exact parsed body bytes after stripping one leading BOM', () => {
   assert.equal(markdownBodyHash('\uFEFFBody\r\n'), markdownBodyHash('Body\r\n'));
   assert.notEqual(markdownBodyHash('Body\r\n'), markdownBodyHash('Body\n'));
   assert.notEqual(markdownBodyHash(' Body\r\n'), markdownBodyHash('Body\r\n'));
+});
+
+test('matches the shared Java wire-signature vector', async () => {
+  const fixture = JSON.parse(await readFile(path.join(
+    import.meta.dirname,
+    '../../v1/validation/test/fixtures/reconciliation-signature.json'
+  ), 'utf8'));
+  assert.equal(
+    signReconciliationBody(
+      fixture.siteId,
+      Buffer.from(fixture.bodyBase64, 'base64'),
+      Buffer.from(fixture.secretBase64, 'base64').toString('utf8')
+    ),
+    `sha256=${fixture.signatureHex}`
+  );
 });
 
 test('groups variants while metadata remains independent from the body hash', () => {
@@ -330,11 +349,58 @@ test('acknowledgement signs the live deployed SHA rather than the reconstruction
 
 test('runs locally against a fixture repository without GitHub context', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'gala-action-'));
-  await mkdir(path.join(root, '.gala', 'build'), { recursive: true });
-  await writeFile(
-    path.join(root, '.gala', 'build', 'validated-posts.json'),
-    JSON.stringify(manifest())
-  );
-  const result = await runLocalFixture({ root, input: input() });
+  await mkdir(path.join(root, 'content', 'posts', 'post'), { recursive: true });
+  await mkdir(path.join(root, '.gala'), { recursive: true });
+  await mkdir(path.join(root, 'node_modules', '@11ty', 'eleventy'), { recursive: true });
+  await writeFile(path.join(root, 'content', 'posts', 'post', 'index.en.md'), `---
+id: ${ARTICLE}
+title: Post
+description: Fixture post
+publishAfterDate: 2026-08-10
+language: en
+---
+
+Body.
+`);
+  await writeFile(path.join(root, '.gala', 'publication-state.yml'), 'schemaVersion: 1\nposts: []\n');
+  await writeFile(path.join(root, '.gala', 'managed-files.json'), `${JSON.stringify({
+    schemaVersion: 1,
+    files: {},
+    themePackage: {
+      name: '@rathnasgala/theme',
+      version: '0.0.1',
+      availableDesignThemes: ['editorial'],
+      securityAdvisories: []
+    }
+  })}\n`);
+  await writeFile(path.join(root, 'site.config.yml'), `schemaVersion: 1
+site:
+  timezone: UTC
+hosting:
+  canonicalBaseUrl: https://example.com
+  pathPrefix: /
+design:
+  theme: editorial
+framework:
+  themePackage:
+    name: "@rathnasgala/theme"
+    version: "0.0.1"
+`);
+  await writeFile(path.join(root, 'node_modules', '@11ty', 'eleventy', 'cmd.cjs'), `
+const { mkdirSync, writeFileSync } = require('node:fs');
+const output = process.argv.find((value) => value.startsWith('--output=')).slice(9);
+mkdirSync(output, { recursive: true });
+writeFileSync(require('node:path').join(output, 'index.html'), '<!doctype html>');
+`);
+  const result = await runLocalFixture({
+    root,
+    input: input({ configPath: 'site.config.yml', timezone: 'UTC', outputDirectory: '_site' }),
+    adapters: { now: () => new Date('2026-08-11T20:00:00Z') }
+  });
   assert.equal(result.outcome, 'PARTIAL');
+  assert.match(
+    await readFile(path.join(root, '.gala', 'build', 'validated-posts.json'), 'utf8'),
+    new RegExp(ARTICLE)
+  );
+  assert.match(await readFile(path.join(root, '_site', 'index.html'), 'utf8'), /doctype/);
 });
