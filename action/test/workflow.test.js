@@ -71,15 +71,19 @@ test('reporting is unconditional and partial results are not overwritten by a gr
   assert.match(source, /exit 1/);
 });
 
-test('release publishes the validator before registry-backed bundle verification and tagging', () => {
+test('release publishes or integrity-verifies the validator before registry-backed bundle verification and tagging', () => {
   const publish = release.indexOf('Publish with OIDC provenance');
   const registryBuild = release.indexOf('Rebuild the action against the published validator');
   const tag = release.indexOf('Tag the verified release tree');
   assert.ok(publish > 0 && registryBuild > publish && tag > registryBuild);
   assert.match(release, /npm publish --workspace @rathnasgala\/content-validation --access public --provenance/);
+  assert.match(release, /npm pack --workspace @rathnasgala\/content-validation --dry-run --json/);
+  assert.match(release, /npm view "@rathnasgala\/content-validation@\$GALA_VERSION" dist\.integrity/);
+  assert.match(release, /if \[ "\$published_integrity" != "\$local_integrity" \]/);
+  assert.match(release, /Published validator integrity does not match the release tree/);
   assert.match(release, /^    environment: npm-validator-release$/m);
-  assert.match(release, /npm view "@rathnasgala\/content-validation@\$GALA_VERSION" version/);
-  assert.match(release, /cmp --silent "\$release_root\/dist\/index\.js" action\/dist\/index\.js/);
+  assert.match(release, /Registry-backed bundle differs from action\/dist\/index\.js/);
+  assert.match(release, /Registry-backed bundle differs from dist\/index\.js/);
   assert.match(release, /tail -n \+2 action\.yml \| cmp --silent action\/action\.yml -/);
   assert.match(release, /grep -Fqx '# Gala publish distribution' README\.md/);
   assert.match(release, /git push origin "refs\/tags\/v\$GALA_VERSION"/);

@@ -67,8 +67,23 @@ jobs:
       - name: Verify the complete release tree
         run: npm run test:release
 
-      - name: Publish with OIDC provenance
-        run: npm publish --workspace @rathnasgala/content-validation --access public --provenance
+      - name: Publish with OIDC provenance or verify immutable package
+        env:
+          GALA_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          local_integrity="$(npm pack --workspace @rathnasgala/content-validation --dry-run --json | node -e "let value=''; process.stdin.on('data', chunk => value += chunk); process.stdin.on('end', () => process.stdout.write(JSON.parse(value)[0].integrity));")"
+          published_integrity="$(npm view "@rathnasgala/content-validation@$GALA_VERSION" dist.integrity 2>/dev/null || true)"
+          if [ -n "$published_integrity" ]; then
+            if [ "$published_integrity" != "$local_integrity" ]; then
+              echo "Published validator integrity does not match the release tree" >&2
+              exit 1
+            fi
+            echo "Verified existing immutable validator $GALA_VERSION"
+          else
+            npm publish --workspace @rathnasgala/content-validation --access public --provenance
+          fi
 
       - name: Wait for the immutable validator version to resolve
         env:
@@ -77,9 +92,14 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in 1 2 3 4 5 6; do
-            published="$(npm view "@rathnasgala/content-validation@$GALA_VERSION" version 2>/dev/null || true)"
-            if [ "$published" = "$GALA_VERSION" ]; then
+            local_integrity="$(npm pack --workspace @rathnasgala/content-validation --dry-run --json | node -e "let value=''; process.stdin.on('data', chunk => value += chunk); process.stdin.on('end', () => process.stdout.write(JSON.parse(value)[0].integrity));")"
+            published_integrity="$(npm view "@rathnasgala/content-validation@$GALA_VERSION" dist.integrity 2>/dev/null || true)"
+            if [ "$published_integrity" = "$local_integrity" ]; then
               exit 0
+            fi
+            if [ -n "$published_integrity" ]; then
+              echo "Published validator integrity does not match the release tree" >&2
+              exit 1
             fi
             sleep $((attempt * 5))
           done
@@ -106,8 +126,14 @@ jobs:
           npm install --prefix "$release_root" --ignore-scripts --package-lock-only
           npm ci --prefix "$release_root" --ignore-scripts
           npm run --prefix "$release_root" bundle
-          cmp --silent "$release_root/dist/index.js" action/dist/index.js
-          cmp --silent "$release_root/dist/index.js" dist/index.js
+          cmp --silent "$release_root/dist/index.js" action/dist/index.js || {
+            echo "Registry-backed bundle differs from action/dist/index.js" >&2
+            exit 1
+          }
+          cmp --silent "$release_root/dist/index.js" dist/index.js || {
+            echo "Registry-backed bundle differs from dist/index.js" >&2
+            exit 1
+          }
 
       - name: Tag the verified release tree
         env:
