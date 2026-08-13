@@ -1,4 +1,5 @@
 import * as core from '@actions/core';
+import { fileURLToPath } from 'node:url';
 import { parseActionInputs, publicOutputs } from './contract.js';
 import { CONTENT_VALIDATION_VERSION } from './envelope.js';
 import { createHostedAdapters } from './hosted.js';
@@ -22,6 +23,6 @@ export async function runEntrypoint({
   return result;
 }
 
-if (process.env.GITHUB_ACTIONS === 'true') {
+if (process.argv[1] != null && fileURLToPath(import.meta.url) === process.argv[1]) {
   runEntrypoint().catch((error) => core.setFailed(error instanceof Error ? error.message : String(error)));
 }
