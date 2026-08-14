@@ -25,6 +25,7 @@ function manifest(overrides = {}) {
   return {
     schemaVersion: 1,
     evaluationDate: '2026-08-11',
+    statistics: { publicViewCounts: false },
     redirects: [],
     posts: [{
       source: 'content/posts/post/index.en.md',
@@ -105,6 +106,16 @@ test('groups variants while metadata remains independent from the body hash', ()
     canonicalUrl: 'https://example.com/en/post/',
     frontmatter: { title: 'Raw title', unknown: true }
   });
+});
+
+test('carries the validator-resolved public view-count setting in every full snapshot', () => {
+  assert.deepEqual(envelope().statistics, { publicViewCounts: false });
+  const legacy = manifest();
+  delete legacy.statistics;
+  assert.deepEqual(envelope(legacy).statistics, { publicViewCounts: false });
+  const enabled = manifest();
+  enabled.statistics = { publicViewCounts: true };
+  assert.deepEqual(envelope(enabled).statistics, { publicViewCounts: true });
 });
 
 test('refuses non-emitted content even if it appears in a supplied manifest', () => {

@@ -25,6 +25,14 @@
     },
     "runStatus": { "enum": ["SUCCESS", "FAILED"] },
     "daysSinceLastCommit": { "type": "integer", "minimum": 0 },
+    "statistics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["publicViewCounts"],
+      "properties": {
+        "publicViewCounts": { "type": "boolean" }
+      }
+    },
     "floorGuardOverride": {
       "type": "object",
       "additionalProperties": false,

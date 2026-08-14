@@ -61,6 +61,7 @@ export function createReconciliationEnvelope({
     emittedAt,
     runStatus,
     daysSinceLastCommit,
+    statistics: manifest.statistics ?? { publicViewCounts: false },
     ...(floorGuardOverride == null ? {} : { floorGuardOverride }),
     articles
   };

@@ -928,6 +928,21 @@ function siteLocation(config) {
   };
 }
 
+function siteStatistics(config) {
+  const statistics = config.statistics ?? { publicViewCounts: false };
+  if (statistics == null || Array.isArray(statistics) || typeof statistics !== 'object') {
+    throw new TypeError('statistics must be a mapping');
+  }
+  const unknown = Object.keys(statistics).filter((key) => key !== 'publicViewCounts');
+  if (unknown.length > 0) {
+    throw new TypeError(`Unsupported statistics option: ${unknown.join(', ')}`);
+  }
+  if (statistics.publicViewCounts != null && typeof statistics.publicViewCounts !== 'boolean') {
+    throw new TypeError('statistics.publicViewCounts must be a boolean');
+  }
+  return Object.freeze({ publicViewCounts: statistics.publicViewCounts === true });
+}
+
 export async function regenerateBuildManifest({
   root,
   today,
@@ -977,7 +992,9 @@ export async function regenerateBuildManifest({
       }
     }
   }
-  const location = siteLocation(await regularYaml(siteRoot, configPath, 'site configuration'));
+  const siteConfig = await regularYaml(siteRoot, configPath, 'site configuration');
+  const location = siteLocation(siteConfig);
+  const statistics = siteStatistics(siteConfig);
   const posts = [];
   for (const result of results) {
     if (result.errors.length > 0) continue;
@@ -1038,7 +1055,14 @@ export async function regenerateBuildManifest({
     });
   }
   redirects.sort((left, right) => left.relativeUrl.localeCompare(right.relativeUrl));
-  const manifest = { schemaVersion: 1, evaluationDate, assignedContentIds, posts, redirects };
+  const manifest = {
+    schemaVersion: 1,
+    evaluationDate,
+    statistics,
+    assignedContentIds,
+    posts,
+    redirects
+  };
   await mkdir(path.dirname(manifestPath), { recursive: true });
   const temporary = `${manifestPath}.tmp-${process.pid}`;
   try {
