@@ -32,6 +32,7 @@ test('stages the runtime and reusable workflow at GitHub-resolvable root paths',
     );
     await readFile(path.join(destination, '.github/workflows/publish.yml'));
     await readFile(path.join(destination, '.github/workflows/release-validator.yml'));
+    await readFile(path.join(destination, '.github/workflows/promote-v1.yml'));
     await readFile(path.join(destination, 'v1/validation/package.json'));
     await readFile(path.join(destination, 'action/package.json'));
     assert.deepEqual(

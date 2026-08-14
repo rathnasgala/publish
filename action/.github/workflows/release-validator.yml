@@ -43,6 +43,7 @@ jobs:
           cmp --silent action/dist/index.js dist/index.js
           tail -n +2 .github/workflows/publish.yml | cmp --silent action/.github/workflows/publish.yml -
           tail -n +2 .github/workflows/release-validator.yml | cmp --silent action/.github/workflows/release-validator.yml -
+          tail -n +2 .github/workflows/promote-v1.yml | cmp --silent action/.github/workflows/promote-v1.yml -
           grep -Fqx '# Gala publish distribution' README.md
           if git rev-parse --verify "refs/tags/v$GALA_VERSION" >/dev/null 2>&1; then
             echo "Tag v$GALA_VERSION already exists" >&2
@@ -134,7 +135,7 @@ jobs:
             exit 1
           }
 
-      - name: Tag the verified release tree and advance the v1 channel
+      - name: Tag the verified immutable release
         env:
           GALA_VERSION: ${{ inputs.version }}
         shell: bash
@@ -143,5 +144,4 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git tag -a "v$GALA_VERSION" -m "Gala publish v$GALA_VERSION"
-          git tag -f v1 "$GITHUB_SHA"
-          git push --atomic origin "refs/tags/v$GALA_VERSION" "+refs/tags/v1"
+          git push origin "refs/tags/v$GALA_VERSION"

@@ -112,6 +112,10 @@ await generatedYaml(
   path.join(workspace, 'action/.github/workflows/release-validator.yml'),
   path.join(destination, '.github/workflows/release-validator.yml')
 );
+await generatedYaml(
+  path.join(workspace, 'action/.github/workflows/promote-v1.yml'),
+  path.join(destination, '.github/workflows/promote-v1.yml')
+);
 
 const [sourceAction, releasedAction, sourceBundle, releasedBundle] = await Promise.all([
   readFile(path.join(workspace, 'action/action.yml')),

@@ -1,0 +1,75 @@
+# GENERATED DISTRIBUTION COPY — edit the monorepo source, not this file.
+name: Promote verified release to v1
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Immutable semver already deployed by both canaries.
+        required: true
+        type: string
+      smoke01-run-id:
+        description: Successful provider-default canary workflow run ID.
+        required: true
+        type: string
+      smoke02-run-id:
+        description: Successful domain-root canary workflow run ID.
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    environment: action-v1-promotion
+    steps:
+      - name: Check out the immutable candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          ref: v${{ inputs.version }}
+
+      - name: Use the supported action runtime
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.x
+          package-manager-cache: false
+
+      - name: Validate promotion identity
+        env:
+          GALA_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GALA_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$(node -p "require('./v1/validation/package.json').version")" = "$GALA_VERSION"
+          test "$(node -p "require('./action/package.json').version")" = "$GALA_VERSION"
+          test "$(git rev-list -n 1 "v$GALA_VERSION")" = "$GITHUB_SHA"
+
+      - name: Install exactly the locked dependencies
+        run: npm ci
+
+      - name: Run the complete date-gate and release suite
+        run: npm run test:release
+
+      - name: Verify both deployed canaries and URL composition
+        env:
+          GALA_VERSION: ${{ inputs.version }}
+          GALA_SMOKE01_RUN_ID: ${{ inputs.smoke01-run-id }}
+          GALA_SMOKE02_RUN_ID: ${{ inputs.smoke02-run-id }}
+        run: node action/scripts/verify-canaries.js
+
+      - name: Advance the v1 channel
+        env:
+          GALA_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          target_commit="$(git rev-list -n 1 "v$GALA_VERSION")"
+          test -n "$target_commit"
+          git tag -f v1 "$target_commit"
+          git push origin "+refs/tags/v1"

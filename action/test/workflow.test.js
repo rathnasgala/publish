@@ -57,6 +57,14 @@ const release = await readFile(
   new URL('../.github/workflows/release-validator.yml', import.meta.url),
   'utf8'
 );
+const promotion = await readFile(
+  new URL('../.github/workflows/promote-v1.yml', import.meta.url),
+  'utf8'
+);
+const canaryVerification = await readFile(
+  new URL('../scripts/verify-canaries.js', import.meta.url),
+  'utf8'
+);
 
 test('reusable workflow exposes the closed public contract with one explicit secret', () => {
   for (const input of [
@@ -118,10 +126,10 @@ test('reporting is unconditional and partial results are not overwritten by a gr
   assert.match(source, /exit 1/);
 });
 
-test('release publishes or integrity-verifies before atomically tagging the immutable version and v1 channel', () => {
+test('release publishes or integrity-verifies before tagging only the immutable version', () => {
   const publish = release.indexOf('Publish with OIDC provenance');
   const registryBuild = release.indexOf('Rebuild the action against the published validator');
-  const tag = release.indexOf('Tag the verified release tree');
+  const tag = release.indexOf('Tag the verified immutable release');
   assert.ok(publish > 0 && registryBuild > publish && tag > registryBuild);
   assert.match(release, /npm publish --workspace @rathnasgala\/content-validation --access public --provenance/);
   assert.match(release, /npm pack --workspace @rathnasgala\/content-validation --dry-run --json/);
@@ -134,12 +142,36 @@ test('release publishes or integrity-verifies before atomically tagging the immu
   assert.match(release, /tail -n \+2 action\.yml \| cmp --silent action\/action\.yml -/);
   assert.match(release, /grep -Fqx '# Gala publish distribution' README\.md/);
   assert.match(release, /git tag -a "v\$GALA_VERSION"/);
-  assert.match(release, /git tag -f v1 "\$GITHUB_SHA"/);
-  assert.match(release, /git push --atomic origin "refs\/tags\/v\$GALA_VERSION" "\+refs\/tags\/v1"/);
+  assert.match(release, /git push origin "refs\/tags\/v\$GALA_VERSION"/);
+  assert.doesNotMatch(release, /git tag -f v1/);
+  assert.doesNotMatch(release, /refs\/tags\/v1/);
+});
+
+test('v1 promotion is canary-gated and verifies exact topology composition', () => {
+  const tests = promotion.indexOf('Run the complete date-gate and release suite');
+  const canaries = promotion.indexOf('Verify both deployed canaries and URL composition');
+  const tag = promotion.indexOf('Advance the v1 channel');
+  assert.ok(tests > 0 && canaries > tests && tag > canaries);
+  assert.match(promotion, /environment: action-v1-promotion/);
+  assert.match(promotion, /run: npm run test:release/);
+  assert.match(promotion, /node action\/scripts\/verify-canaries\.js/);
+  assert.match(promotion, /target_commit="\$\(git rev-list -n 1 "v\$GALA_VERSION"\)"/);
+  assert.match(promotion, /git tag -f v1 "\$target_commit"/);
+  assert.match(promotion, /git push origin "\+refs\/tags\/v1"/);
+  assert.match(canaryVerification, /rathnasgala\/smoke01/);
+  assert.match(canaryVerification, /rathnasgala\/smoke02/);
+  assert.match(canaryVerification, /run\.event !== 'workflow_dispatch'/);
+  assert.match(canaryVerification, /workflow\.includes\(expectedReference\)/);
+  assert.match(canaryVerification, /<link rel="canonical" href=/);
+  assert.match(canaryVerification, /<loc>\$\{canary\.articleUrl\}<\/loc>/);
+  assert.match(canaryVerification, /hreflang="x-default"/);
+  assert.match(canaryVerification, /assets\/theme\.css/);
+  assert.match(canaryVerification, /assets\/interactions\.js/);
+  assert.match(canaryVerification, /\/engagement/);
 });
 
 test('all release-owned third-party actions are immutable commit pins', () => {
-  for (const workflow of [source, release]) {
+  for (const workflow of [source, release, promotion]) {
     assert.doesNotMatch(workflow, /uses: actions\/(?:checkout|setup-node)@v[0-9]+/);
     assert.match(workflow, /uses: actions\/checkout@[0-9a-f]{40}/);
     assert.match(workflow, /uses: actions\/setup-node@[0-9a-f]{40}/);

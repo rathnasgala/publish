@@ -19,7 +19,7 @@ const RESERVED_SLUGS = new Set([
   'api', 'assets', 'media', 'page', 'deleted'
 ]);
 const SHARE_TARGETS = new Set([
-  'x', 'linkedin', 'mastodon', 'bluesky', 'reddit', 'hacker-news', 'whatsapp', 'email'
+  'x', 'mastodon', 'bluesky', 'hacker-news', 'email'
 ]);
 const SOCIAL_PROFILES = new Set([
   'github', 'x', 'linkedin', 'mastodon', 'bluesky', 'website', 'rss'
