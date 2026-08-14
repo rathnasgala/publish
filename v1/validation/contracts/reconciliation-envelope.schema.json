@@ -12,6 +12,7 @@
     "emittedAt",
     "runStatus",
     "daysSinceLastCommit",
+    "themePackage",
     "articles"
   ],
   "properties": {
@@ -25,12 +26,31 @@
     },
     "runStatus": { "enum": ["SUCCESS", "FAILED"] },
     "daysSinceLastCommit": { "type": "integer", "minimum": 0 },
+    "themePackage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "const": "@rathnasgala/theme" },
+        "version": { "type": "string", "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$" }
+      }
+    },
     "statistics": {
       "type": "object",
       "additionalProperties": false,
       "required": ["publicViewCounts"],
       "properties": {
         "publicViewCounts": { "type": "boolean" }
+      }
+    },
+    "contact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "websiteEnabled", "phoneEnabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "websiteEnabled": { "type": "boolean" },
+        "phoneEnabled": { "type": "boolean" }
       }
     },
     "floorGuardOverride": {
@@ -106,7 +126,24 @@
           "pattern": "^https://(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?::[0-9]{1,5})?(?:/[^\\s]*)?$"
         },
         "frontmatter": { "type": "object", "additionalProperties": true }
-      }
+      },
+      "allOf": [{
+        "if": { "properties": { "state": { "const": "PUBLISHED" } }, "required": ["state"] },
+        "then": {
+          "properties": {
+            "frontmatter": {
+              "type": "object",
+              "required": ["publishAfterDate"],
+              "properties": {
+                "publishAfterDate": {
+                  "type": "string",
+                  "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])$"
+                }
+              }
+            }
+          }
+        }
+      }]
     }
   }
 }

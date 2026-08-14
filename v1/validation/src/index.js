@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { ulid } from 'ulid';
+import MarkdownIt from 'markdown-it';
 
 export {
   compileContractSchema,
@@ -798,22 +799,36 @@ export async function recordSuccessfulDeployment({ root, manifest, deployedOn, d
   return writePublicationState(root, next);
 }
 
-function mediaReferences(data, body) {
+const mediaMarkdown = new MarkdownIt({ html: true, linkify: false, typographer: false });
+
+function parsedMedia(data, body) {
   const references = [];
+  const errors = [];
   if (typeof data?.coverImage === 'string'
       && !/^(?:[a-z][a-z0-9+.-]*:|\/)/i.test(data.coverImage)) {
     references.push(data.coverImage);
   }
-  for (const match of body.matchAll(/!\[[^\]]*]\((?:<)?([^\s)>]+)(?:>)?(?:\s+['"][^'"]*['"])?\)/g)) {
-    references.push(match[1]);
+  for (const token of mediaMarkdown.parse(body, {})) {
+    const candidates = token.children == null ? [token] : [token, ...token.children];
+    for (const candidate of candidates) {
+      if ((candidate.type === 'html_block' || candidate.type === 'html_inline')
+          && /<(?:img|audio|video|source|picture)\b/i.test(candidate.content)) {
+        errors.push('raw HTML media is not allowed; use Markdown image syntax');
+      }
+      if (candidate.type === 'image') references.push(candidate.attrGet('src'));
+    }
   }
-  return references.filter((reference) => !/^(?:https:|mailto:|\/)/i.test(reference));
+  return {
+    errors,
+    references: references.filter((reference) => !/^(?:https:|mailto:|\/)/i.test(reference))
+  };
 }
 
 async function validateMedia(file, data, body) {
   const postDirectory = path.dirname(file);
   const realPostDirectory = await realpath(postDirectory);
-  const errors = [];
+  const parsed = parsedMedia(data, body);
+  const errors = [...parsed.errors];
   const media = [];
   if (data?.coverImage != null && (
     typeof data.coverImage !== 'string'
@@ -823,7 +838,7 @@ async function validateMedia(file, data, body) {
   )) {
     errors.push(`coverImage must be relative to the post folder: ${data.coverImage}`);
   }
-  for (const reference of new Set(mediaReferences(data, body))) {
+  for (const reference of new Set(parsed.references)) {
     const resolved = path.resolve(postDirectory, reference);
     const relative = path.relative(postDirectory, resolved);
     if (relative.startsWith('..') || path.isAbsolute(relative)) {
@@ -943,6 +958,31 @@ function siteStatistics(config) {
   return Object.freeze({ publicViewCounts: statistics.publicViewCounts === true });
 }
 
+const CONTACT_KEYS = Object.freeze([
+  'enabled', 'websiteEnabled', 'phoneEnabled'
+]);
+
+export function normalizeContactConfiguration(value) {
+  if (value == null) {
+    return Object.freeze({ enabled: false, websiteEnabled: false, phoneEnabled: false });
+  }
+  if (Array.isArray(value) || typeof value !== 'object') {
+    throw new TypeError('contact must be a mapping');
+  }
+  const unknown = Object.keys(value).filter((key) => !CONTACT_KEYS.includes(key));
+  if (unknown.length > 0) throw new TypeError(`Unsupported contact option: ${unknown.join(', ')}`);
+  for (const field of ['enabled', 'websiteEnabled', 'phoneEnabled']) {
+    if (value[field] != null && typeof value[field] !== 'boolean') {
+      throw new TypeError(`contact.${field} must be a boolean`);
+    }
+  }
+  return Object.freeze({
+    enabled: value.enabled === true,
+    websiteEnabled: value.websiteEnabled === true,
+    phoneEnabled: value.phoneEnabled === true
+  });
+}
+
 export async function regenerateBuildManifest({
   root,
   today,
@@ -995,6 +1035,7 @@ export async function regenerateBuildManifest({
   const siteConfig = await regularYaml(siteRoot, configPath, 'site configuration');
   const location = siteLocation(siteConfig);
   const statistics = siteStatistics(siteConfig);
+  const contact = normalizeContactConfiguration(siteConfig.contact);
   const posts = [];
   for (const result of results) {
     if (result.errors.length > 0) continue;
@@ -1058,7 +1099,9 @@ export async function regenerateBuildManifest({
   const manifest = {
     schemaVersion: 1,
     evaluationDate,
+    themePackage: { ...siteConfig.framework.themePackage },
     statistics,
+    contact,
     assignedContentIds,
     posts,
     redirects

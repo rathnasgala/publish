@@ -108,6 +108,9 @@ test('state persistence is post-deployment, secret-blind, and preserves caller H
   assert.match(persistence, /git push origin "\$commit:refs\/heads\/\$GALA_SOURCE_BRANCH"/);
   assert.match(persistence, /\.gala\/build\/deployment-stage\.json/);
   assert.match(persistence, /assignedContentIds/);
+  assert.match(persistence, /engagementSnapshotHash/);
+  assert.match(persistence, /Engagement snapshot changed after deployment/);
+  assert.match(persistence, /git update-index --add --cacheinfo "100644,\$snapshot_blob,.engagement-snapshot.json"/);
   assert.match(persistence, /createHash\('sha256'\)/);
   assert.match(persistence, /node - "\$stage" > "\$assigned_paths_file"/);
   assert.match(persistence, /mapfile -t assigned_paths < "\$assigned_paths_file"/);
@@ -117,6 +120,21 @@ test('state persistence is post-deployment, secret-blind, and preserves caller H
   assert.match(persistence, /\[skip ci\]/);
   assert.doesNotMatch(persistence, /site-secret|secrets\./);
   assert.doesNotMatch(persistence, /git (?:checkout|reset)/);
+});
+
+test('build-only snapshot persistence is scoped, race-safe, and non-blocking', () => {
+  const persistence = source.slice(
+    source.indexOf('- name: Persist refreshed build-only engagement snapshot'),
+    source.indexOf('- name: Publish the guarded artifact to gh-pages')
+  );
+  assert.match(persistence, /inputs\.operation == 'build' && inputs\.mode == 'build-only'/);
+  assert.match(persistence, /continue-on-error: true/);
+  assert.match(persistence, /test ! -L "\.engagement-snapshot\.json"/);
+  assert.match(persistence, /git diff --quiet "\$\{GITHUB_SHA\}" -- \.engagement-snapshot\.json/);
+  assert.match(persistence, /test "\$original_blob" = "\$parent_blob"/);
+  assert.match(persistence, /git update-index --add --cacheinfo "100644,\$snapshot_blob,\.engagement-snapshot\.json"/);
+  assert.match(persistence, /git commit-tree/);
+  assert.doesNotMatch(persistence, /git add|git commit /);
 });
 
 test('reporting is unconditional and partial results are not overwritten by a green step', () => {

@@ -1,5 +1,5 @@
-import { createReconciliationEnvelope } from './envelope.js';
-import { ReconciliationTransportError, sendReconciliation } from './transport.js';
+import { CONTENT_VALIDATION_VERSION, createReconciliationEnvelope } from './envelope.js';
+import { ReconciliationTransportError, sendBuildFailure, sendReconciliation } from './transport.js';
 import { ActionOutcome } from './contract.js';
 import { evaluateDeployFloor, floorOverrideReason } from './floor-guard.js';
 
@@ -62,6 +62,7 @@ export async function runAction(input, adapters) {
     operation,
     outcome: ActionOutcome.FAILED,
     reconciliation: null,
+    themeAdvisory: null,
     publishedCount: 0,
     republishedCount: 0,
     delistedCount: 0,
@@ -73,6 +74,7 @@ export async function runAction(input, adapters) {
     floorGuardOverrideReason: null,
     floorGuardLostPages: 0
   };
+  let engagementSnapshotHash = null;
   try {
     const head = await adapters.currentCommitSha(input.root);
     if (head !== input.commitSha) {
@@ -80,6 +82,13 @@ export async function runAction(input, adapters) {
     }
     if (operation === ActionOperation.ACKNOWLEDGE_DEPLOYMENT) {
       await adapters.verifyRecordedState(input);
+    }
+    if (operation === ActionOperation.BUILD && adapters.refreshEngagementSnapshot != null) {
+      try {
+        engagementSnapshotHash = await adapters.refreshEngagementSnapshot(input);
+      } catch (error) {
+        adapters.warn('ENGAGEMENT_SNAPSHOT_REFRESH_DEFERRED', error);
+      }
     }
     const validation = await adapters.validateAndBuild(input);
     const manifest = validation.manifest ?? validation;
@@ -92,6 +101,7 @@ export async function runAction(input, adapters) {
         adapters,
         validation.floorGuardOverride ?? null
       );
+      report.themeAdvisory = report.reconciliation?.themeAdvisory ?? null;
       Object.assign(report, reconciliationCounts(report.reconciliation));
       const floorGuardOverridden = validation.floorGuardOverride != null;
       if (floorGuardOverridden) {
@@ -139,9 +149,35 @@ export async function runAction(input, adapters) {
       lostPages: floor.lostPages,
       reason: floor.reason
     } : null;
-    await adapters.stageDeployment(input, manifest, floorGuardOverride);
+    await adapters.stageDeployment(
+      input, manifest, floorGuardOverride, engagementSnapshotHash
+    );
     report.outcome = ActionOutcome.PARTIAL;
     return report;
+  } catch (error) {
+    try {
+      await (adapters.sendBuildFailure ?? sendBuildFailure)({
+        apiBaseUrl: input.apiBaseUrl,
+        siteId: input.siteId,
+        siteSecret: input.siteSecret,
+        fetchImpl: adapters.fetch,
+        report: {
+          emittedAt: adapters.now().toISOString(),
+          runId: input.runId,
+          runAttempt: input.runAttempt,
+          commitSha: input.deployedCommitSha ?? input.commitSha,
+          validatorVersion: CONTENT_VALIDATION_VERSION,
+          errors: [{
+            source: 'action',
+            code: 'BUILD_FAILED',
+            message: String(error instanceof Error ? error.message : error).slice(0, 1024)
+          }]
+        }
+      });
+    } catch (reportError) {
+      adapters.warn('BUILD_FAILURE_REPORT_DEFERRED', reportError);
+    }
+    throw error;
   } finally {
     await adapters.report(report);
   }

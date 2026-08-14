@@ -146,6 +146,41 @@ jobs:
           run-id: ${{ github.run_id }}
           run-attempt: ${{ github.run_attempt }}
 
+      - name: Persist refreshed build-only engagement snapshot
+        if: inputs.operation == 'build' && inputs.mode == 'build-only' && steps.primary.outcome == 'success'
+        continue-on-error: true
+        env:
+          GALA_SOURCE_BRANCH: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f ".engagement-snapshot.json"
+          test ! -L ".engagement-snapshot.json"
+          git diff --quiet "${GITHUB_SHA}" -- .engagement-snapshot.json && exit 0
+          git check-ref-format --branch "$GALA_SOURCE_BRANCH"
+          git fetch --no-tags origin "+refs/heads/$GALA_SOURCE_BRANCH:refs/remotes/origin/$GALA_SOURCE_BRANCH"
+          parent="$(git rev-parse --verify "refs/remotes/origin/$GALA_SOURCE_BRANCH^{commit}")"
+          original_blob="$(git rev-parse "$GITHUB_SHA:.engagement-snapshot.json" 2>/dev/null || true)"
+          parent_blob="$(git rev-parse "$parent:.engagement-snapshot.json" 2>/dev/null || true)"
+          test "$original_blob" = "$parent_blob" || {
+            echo "::warning::Engagement snapshot changed concurrently; refreshed snapshot was not committed"
+            exit 1
+          }
+          index="$(mktemp "$RUNNER_TEMP/gala-snapshot-index.XXXXXX")"
+          rm -- "$index"
+          trap 'rm -f -- "$index"' EXIT
+          export GIT_INDEX_FILE="$index"
+          git read-tree "$parent^{tree}"
+          snapshot_blob="$(git hash-object -w -- .engagement-snapshot.json)"
+          git update-index --add --cacheinfo "100644,$snapshot_blob,.engagement-snapshot.json"
+          tree="$(git write-tree)"
+          export GIT_AUTHOR_NAME='github-actions[bot]'
+          export GIT_AUTHOR_EMAIL='41898282+github-actions[bot]@users.noreply.github.com'
+          export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME"
+          export GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+          commit="$(printf '%s\n' 'chore(gala): refresh engagement snapshot [skip ci]' | git commit-tree "$tree" -p "$parent")"
+          git push origin "$commit:refs/heads/$GALA_SOURCE_BRANCH"
+
       - name: Publish the guarded artifact to gh-pages
         id: deploy
         if: inputs.operation == 'build' && inputs.mode == 'build-and-deploy' && steps.primary.outcome == 'success'
@@ -229,8 +264,21 @@ jobs:
           const stagePath = process.argv[2];
           const stage = JSON.parse(readFileSync(stagePath, 'utf8'));
           if (stage.schemaVersion !== 1 || stage.commitSha !== process.env.GALA_DEPLOYED_COMMIT_SHA
-              || !Array.isArray(stage.assignedContentIds)) {
+              || !Array.isArray(stage.assignedContentIds)
+              || !(stage.engagementSnapshotHash === null
+                || /^[a-f0-9]{64}$/.test(stage.engagementSnapshotHash))) {
             throw new Error('Deployment stage identity assignments are invalid');
+          }
+          if (stage.engagementSnapshotHash !== null) {
+            const snapshot = '.engagement-snapshot.json';
+            const metadata = lstatSync(snapshot);
+            if (!metadata.isFile() || metadata.isSymbolicLink()) {
+              throw new Error('Engagement snapshot is not a regular file');
+            }
+            const actual = createHash('sha256').update(readFileSync(snapshot)).digest('hex');
+            if (actual !== stage.engagementSnapshotHash) {
+              throw new Error('Engagement snapshot changed after deployment');
+            }
           }
           const seen = new Set();
           for (const assigned of stage.assignedContentIds) {
@@ -266,6 +314,10 @@ jobs:
           git read-tree "$parent^{tree}"
           blob="$(git hash-object -w -- "$state")"
           git update-index --add --cacheinfo "100644,$blob,.gala/publication-state.yml"
+          if node -e "const s=require('./$stage'); process.exit(s.engagementSnapshotHash === null ? 1 : 0)"; then
+            snapshot_blob="$(git hash-object -w -- .engagement-snapshot.json)"
+            git update-index --add --cacheinfo "100644,$snapshot_blob,.engagement-snapshot.json"
+          fi
           for content_path in "${assigned_paths[@]}"; do
             deployed_blob="$(git rev-parse "$GALA_DEPLOYED_COMMIT_SHA:$content_path")"
             parent_blob="$(git rev-parse "$parent:$content_path")"

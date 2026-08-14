@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import {
@@ -8,6 +11,7 @@ import {
   evaluatePublicationState,
   findArticleIdentityConflicts,
   findDuplicateVariants,
+  normalizeContactConfiguration,
   normalizeSiteConfigurationOptions,
   normalizePathPrefix,
   parseFrontmatter,
@@ -16,7 +20,8 @@ import {
   resolveFolderSlugs,
   slugifyTitle,
   validatePost,
-  validatePublicationState
+  validatePublicationState,
+  validateContent
 } from '../src/index.js';
 
 const today = '2026-06-15';
@@ -76,6 +81,33 @@ test('parses CRLF frontmatter without normalizing Markdown body bytes', () => {
   assert.equal(result.data.title, 'Hello');
   assert.equal(result.body, 'Body\r\n');
   assert.notEqual(result.body, 'Body\n');
+});
+
+test('one Markdown AST accepts Markdown images and rejects raw HTML media', async (context) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'gala-media-contract-'));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const post = path.join(root, 'content', 'posts', 'media-post');
+  await mkdir(post, { recursive: true });
+  await writeFile(path.join(post, 'photo.png'), 'fixture');
+  const frontmatter = `---
+id: 01K00000000000000000000000
+title: Media
+publishAfterDate: 2026-06-15
+language: en
+tags: [testing]
+---
+`;
+  await writeFile(path.join(post, 'index.en.md'), `${frontmatter}![Photo](photo.png)\n`);
+  let results = await validateContent({ root, today });
+  assert.deepEqual(results[0].errors, []);
+  assert.equal(results[0].media[0].reference, 'photo.png');
+
+  await writeFile(path.join(post, 'index.en.md'),
+    `${frontmatter}<img src="photo.png" alt="Photo">\n`);
+  results = await validateContent({ root, today });
+  assert.deepEqual(results[0].errors,
+    ['raw HTML media is not allowed; use Markdown image syntax']);
+  assert.deepEqual(results[0].media, []);
 });
 
 test('accepts the documented valid content contract', () => {
@@ -259,6 +291,31 @@ test('content ID generation is injectable by timestamp and canonical', () => {
 
 test('refuses reserved derived slugs', () => {
   assert.throws(() => slugifyTitle('API'), /reserved/);
+});
+
+test('normalizes fail-safe authenticated contact settings', () => {
+  assert.deepEqual(normalizeContactConfiguration(), {
+    enabled: false,
+    websiteEnabled: false,
+    phoneEnabled: false
+  });
+  assert.deepEqual(normalizeContactConfiguration({
+    enabled: true,
+    websiteEnabled: true,
+    phoneEnabled: false
+  }), {
+    enabled: true,
+    websiteEnabled: true,
+    phoneEnabled: false
+  });
+  for (const value of [
+    true,
+    { enabled: true, destinationEmail: 'author@example.com' },
+    { enabled: 'true' },
+    { enabled: false, unknown: true }
+  ]) {
+    assert.throws(() => normalizeContactConfiguration(value), /contact/);
+  }
 });
 
 test('normalizes the documented local site configuration contract', () => {

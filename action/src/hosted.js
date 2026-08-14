@@ -1,6 +1,9 @@
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { readEngagementSnapshot } from './transport.js';
+import { attributionTier } from './attribution.js';
 
 import * as core from '@actions/core';
 import {
@@ -112,10 +115,11 @@ export function createHostedAdapters({
   env = process.env,
   now = () => new Date(),
   runCommand = run,
-  summary = core.summary
+  summary = core.summary,
+  fetchImpl = fetch
 } = {}) {
   return {
-    fetch,
+    fetch: fetchImpl,
     now,
     currentCommitSha: async (root) => (
       await runCommand('git', ['rev-parse', 'HEAD'], { cwd: root })
@@ -170,7 +174,30 @@ export function createHostedAdapters({
         }
       }
     },
+    refreshEngagementSnapshot: async (input) => {
+      const snapshot = await readEngagementSnapshot({
+        apiBaseUrl: input.apiBaseUrl,
+        siteId: input.siteId,
+        siteSecret: input.siteSecret,
+        runId: input.runId,
+        runAttempt: input.runAttempt,
+        emittedAt: now().toISOString(),
+        fetchImpl
+      });
+      const target = path.join(input.root, '.engagement-snapshot.json');
+      const next = `${JSON.stringify(snapshot, null, 2)}\n`;
+      let current = null;
+      try { current = await readFile(target, 'utf8'); } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+      }
+      if (current === next) return null;
+      await atomicJson(target, snapshot);
+      return createHash('sha256').update(next).digest('hex');
+    },
     validateAndBuild: async (input) => {
+      const resolvedAttributionTier = await attributionTier({
+        root: input.root, siteId: input.siteId, now: now()
+      });
       const generated = await regenerateBuildManifest({
         root: input.root,
         configPath: input.configPath,
@@ -198,7 +225,8 @@ export function createHostedAdapters({
           ...env,
           GALA_CONFIG_PATH: input.configPath,
           GALA_EVALUATION_DATE: generated.manifest.evaluationDate,
-          GALA_BUILD_INSTANT: now().toISOString()
+          GALA_BUILD_INSTANT: now().toISOString(),
+          GALA_ATTRIBUTION_TIER: resolvedAttributionTier
         }
       });
       const deploymentStage = input.operation === 'acknowledge-deployment'
@@ -268,7 +296,7 @@ export function createHostedAdapters({
     currentPageCount: async (input) => countHtmlFiles(
       path.resolve(input.root, input.outputDirectory)
     ),
-    stageDeployment: async (input, manifest, floorGuardOverride) => {
+    stageDeployment: async (input, manifest, floorGuardOverride, engagementSnapshotHash = null) => {
       const current = await readPublicationState(input.root, { allowMissing: true });
       const next = derivePublicationState({
         current,
@@ -283,6 +311,7 @@ export function createHostedAdapters({
         schemaVersion: 1,
         commitSha: input.commitSha,
         floorGuardOverride,
+        engagementSnapshotHash,
         assignedContentIds: manifest.assignedContentIds ?? []
       });
     },
@@ -307,6 +336,17 @@ export function createHostedAdapters({
               errors.map((error) => [source, error])
             )
           ]);
+      }
+      if (report.themeAdvisory != null) {
+        summary
+          .addHeading('Theme security advisory', 2)
+          .addTable([
+            [{ data: 'Advisory', header: true }, report.themeAdvisory.id],
+            ['Severity', report.themeAdvisory.severity],
+            ['Installed version', report.themeAdvisory.installedVersion],
+            ['Fixed version', report.themeAdvisory.fixedVersion]
+          ])
+          .addLink('Advisory details', report.themeAdvisory.url);
       }
       await summary.write();
     },

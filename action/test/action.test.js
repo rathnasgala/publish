@@ -12,6 +12,8 @@ import { ActionOperation, BuildMode, runAction } from '../src/orchestrator.js';
 import { runLocalFixture } from '../src/local.js';
 import {
   ReconciliationTransportError,
+  readEngagementSnapshot,
+  sendBuildFailure,
   sendReconciliation,
   signReconciliationBody
 } from '../src/transport.js';
@@ -25,7 +27,9 @@ function manifest(overrides = {}) {
   return {
     schemaVersion: 1,
     evaluationDate: '2026-08-11',
+    themePackage: { name: '@rathnasgala/theme', version: '0.0.1' },
     statistics: { publicViewCounts: false },
+    contact: { enabled: false, websiteEnabled: false, phoneEnabled: false },
     redirects: [],
     posts: [{
       source: 'content/posts/post/index.en.md',
@@ -36,7 +40,7 @@ function manifest(overrides = {}) {
       body: 'Body\r\n',
       contentBody: 'Body\r\n',
       canonicalUrl: 'https://example.com/en/post/',
-      rawFrontmatter: { title: 'Raw title', unknown: true },
+      rawFrontmatter: { title: 'Raw title', publishAfterDate: '2026-08-10', unknown: true },
       frontmatter: {
         title: 'Title',
         description: 'Description',
@@ -104,7 +108,7 @@ test('groups variants while metadata remains independent from the body hash', ()
     tags: ['platform'],
     coverImage: 'cover.png',
     canonicalUrl: 'https://example.com/en/post/',
-    frontmatter: { title: 'Raw title', unknown: true }
+    frontmatter: { title: 'Raw title', publishAfterDate: '2026-08-10', unknown: true }
   });
 });
 
@@ -116,6 +120,35 @@ test('carries the validator-resolved public view-count setting in every full sna
   const enabled = manifest();
   enabled.statistics = { publicViewCounts: true };
   assert.deepEqual(envelope(enabled).statistics, { publicViewCounts: true });
+});
+
+test('carries normalized contact settings in every full snapshot', () => {
+  assert.deepEqual(envelope().contact, {
+    enabled: false,
+    websiteEnabled: false,
+    phoneEnabled: false
+  });
+  const legacy = manifest();
+  delete legacy.contact;
+  assert.deepEqual(envelope(legacy).contact, {
+    enabled: false,
+    websiteEnabled: false,
+    phoneEnabled: false
+  });
+  const enabled = manifest();
+  enabled.contact = {
+    enabled: true,
+    websiteEnabled: true,
+    phoneEnabled: false
+  };
+  assert.deepEqual(envelope(enabled).contact, enabled.contact);
+});
+
+test('carries the exact validated theme identity in every signed snapshot', () => {
+  assert.deepEqual(envelope().themePackage, {
+    name: '@rathnasgala/theme',
+    version: '0.0.1'
+  });
 });
 
 test('refuses non-emitted content even if it appears in a supplied manifest', () => {
@@ -168,6 +201,59 @@ test('rejects insecure API origins before transmitting the site secret signature
   assert.equal(called, false);
 });
 
+test('signs the exact bounded build-failure body for the dedicated route', async () => {
+  let request;
+  const report = {
+    emittedAt: '2026-08-11T20:00:00.000Z',
+    runId: 42,
+    runAttempt: 1,
+    commitSha: SHA,
+    validatorVersion: '0.0.4',
+    errors: [{ source: 'action', code: 'BUILD_FAILED', message: 'validation failed' }]
+  };
+  await sendBuildFailure({
+    apiBaseUrl: 'https://api.example.com',
+    siteId: SITE,
+    siteSecret: SECRET,
+    report,
+    fetchImpl: async (url, options) => {
+      request = { url: url.toString(), ...options };
+      return { ok: true, status: 202 };
+    }
+  });
+  assert.equal(request.url, `https://api.example.com/v1/sites/${SITE}/build-reports`);
+  assert.deepEqual(JSON.parse(request.body), report);
+  assert.equal(request.headers['Gala-Signature'], signReconciliationBody(SITE, request.body, SECRET));
+});
+
+test('reads the signed engagement snapshot without placing credentials in the body', async () => {
+  let request;
+  const result = await readEngagementSnapshot({
+    apiBaseUrl: 'https://api.example.com',
+    siteId: SITE,
+    siteSecret: SECRET,
+    runId: 42,
+    runAttempt: 1,
+    emittedAt: '2026-08-11T20:00:00.000Z',
+    fetchImpl: async (url, options) => {
+      request = { url: url.toString(), ...options };
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          schemaVersion: 1,
+          refreshedAt: '2026-08-11T20:00:00Z',
+          articles: { [ARTICLE]: { reactions: 1, comments: 2, views: 3 } }
+        })
+      };
+    }
+  });
+  assert.equal(request.url, `https://api.example.com/v1/sites/${SITE}/engagement-snapshot/read`);
+  assert.equal(request.body.includes(SECRET), false);
+  assert.equal(result.articles[ARTICLE].views, 3);
+  assert.equal(request.headers['Gala-Signature'], signReconciliationBody(SITE, request.body, SECRET));
+});
+
 function adapters(overrides = {}) {
   const calls = [];
   return {
@@ -182,6 +268,7 @@ function adapters(overrides = {}) {
       currentPageCount: async () => { calls.push('current-count'); return 1; },
       stageDeployment: async () => { calls.push('stage-deployment'); },
       sendReconciliation: async () => { calls.push('reconcile'); return { noOp: false }; },
+      sendBuildFailure: async () => { calls.push('build-failure'); },
       report: async (summary) => { calls.push(`report:${summary.outcome}`); },
       warn: () => { calls.push('warn'); },
       now: () => new Date('2026-08-11T20:00:00Z'),
@@ -214,6 +301,16 @@ test('build-only reports partial and cannot deploy, enforce a floor, or reconcil
   const result = await runAction(input(), fixture.value);
   assert.equal(result.outcome, 'PARTIAL');
   assert.deepEqual(fixture.calls, ['head', 'build', 'keepalive', 'report:PARTIAL']);
+});
+
+test('snapshot refresh failure warns and never blocks the build', async () => {
+  const fixture = adapters({
+    refreshEngagementSnapshot: async () => { throw new Error('platform unavailable'); }
+  });
+  const result = await runAction(input(), fixture.value);
+  assert.equal(result.outcome, 'PARTIAL');
+  assert.equal(fixture.calls.includes('warn'), true);
+  assert.equal(fixture.calls.includes('build'), true);
 });
 
 test('reports validation skips and keepalive observability without putting failures in the manifest', async () => {
@@ -324,7 +421,24 @@ test('acknowledgement refuses a moved checkout before validation or signing', as
   await assert.rejects(() => runAction(input({
     operation: ActionOperation.ACKNOWLEDGE_DEPLOYMENT
   }), fixture.value), /does not match expected commit/);
-  assert.deepEqual(fixture.calls, ['report:FAILED']);
+  assert.deepEqual(fixture.calls, ['build-failure', 'report:FAILED']);
+});
+
+test('reports a failed build independently and never masks the original error', async () => {
+  let failure;
+  const fixture = adapters({
+    validateAndBuild: async () => { throw new Error('invalid content'); },
+    sendBuildFailure: async (value) => { failure = value.report; }
+  });
+
+  await assert.rejects(() => runAction(input(), fixture.value), /invalid content/);
+  assert.equal(failure.commitSha, SHA);
+  assert.equal(failure.runId, 42);
+  assert.equal(failure.runAttempt, 1);
+  assert.deepEqual(failure.errors, [{
+    source: 'action', code: 'BUILD_FAILED', message: 'invalid content'
+  }]);
+  assert.equal(fixture.calls.includes('reconcile'), false);
 });
 
 test('acknowledgement preserves a staged floor override as PARTIAL', async () => {

@@ -21,7 +21,8 @@ const validate = compileContractSchema(schema);
 
 export function validateReconciliationEnvelope(payload) {
   if (validate(payload)) return Object.freeze({ valid: true, errorIds: Object.freeze([]) });
-  const errorIds = [...new Set(validate.errors.map((error) =>
+  const actionableErrors = validate.errors.filter((error) => error.keyword !== 'if');
+  const errorIds = [...new Set(actionableErrors.map((error) =>
     `RECONCILIATION_SCHEMA_${error.keyword.toUpperCase()}`
   ))].sort();
   return Object.freeze({ valid: false, errorIds: Object.freeze(errorIds) });

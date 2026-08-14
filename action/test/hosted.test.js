@@ -64,6 +64,7 @@ function input(root, overrides = {}) {
     operation: 'build',
     mode: 'build-and-deploy',
     root,
+    siteId: '01K00000000000000000000000',
     commitSha: SHA,
     configPath: 'config/site.yml',
     timezone: 'America/Los_Angeles',
@@ -82,6 +83,46 @@ test('hosted validation uses the selected config, emits only the manifest, and c
   assert.equal(result.manifest.posts.length, 1);
   assert.equal(result.currentPageCount, 1);
   assert.match(await readFile(path.join(root, '_site', 'index.html'), 'utf8'), /doctype/);
+});
+
+test('engagement snapshot refresh writes one canonical file and is idempotent', async () => {
+  const root = await fixture();
+  const snapshot = {
+    schemaVersion: 1,
+    refreshedAt: '2026-08-11T20:00:00Z',
+    articles: {
+      '01K00000000000000000000000': { reactions: 2, comments: 1, views: 9 }
+    }
+  };
+  const requests = [];
+  const adapters = createHostedAdapters({
+    now: () => new Date('2026-08-11T20:00:00Z'),
+    fetchImpl: async (url, request) => {
+      requests.push({ url: String(url), request });
+      return new Response(JSON.stringify(snapshot), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  const refreshInput = input(root, {
+    apiBaseUrl: 'https://api.gala67.com',
+    siteId: '01K00000000000000000000000',
+    siteSecret: 's'.repeat(32),
+    runId: '123',
+    runAttempt: 1
+  });
+
+  const firstHash = await adapters.refreshEngagementSnapshot(refreshInput);
+  const secondHash = await adapters.refreshEngagementSnapshot(refreshInput);
+
+  assert.match(firstHash, /^[a-f0-9]{64}$/);
+  assert.equal(secondHash, null);
+  assert.equal(requests.length, 2);
+  assert.equal(
+    await readFile(path.join(root, '.engagement-snapshot.json'), 'utf8'),
+    `${JSON.stringify(snapshot, null, 2)}\n`
+  );
 });
 
 test('deployment stage is commit-bound and carries a floor override into acknowledgement', async () => {
@@ -235,6 +276,7 @@ test('report lists every skipped source and validation reason in the job summary
   const summary = {
     addHeading(value, level) { headings.push([value, level]); return this; },
     addTable(value) { tables.push(value); return this; },
+    addLink() { return this; },
     async write() { writes += 1; }
   };
   const adapters = createHostedAdapters({ summary });
@@ -261,4 +303,46 @@ test('report lists every skipped source and validation reason in the job summary
     ['content/posts/two/index.fr.md', 'language is invalid']
   ]);
   assert.equal(writes, 1);
+});
+
+test('report renders a server-owned theme advisory without raw Markdown', async () => {
+  const headings = [];
+  const tables = [];
+  const links = [];
+  const summary = {
+    addHeading(value, level) { headings.push([value, level]); return this; },
+    addTable(value) { tables.push(value); return this; },
+    addLink(label, url) { links.push([label, url]); return this; },
+    async write() {}
+  };
+  const adapters = createHostedAdapters({ summary });
+
+  await adapters.report({
+    outcome: 'PARTIAL',
+    skippedCount: 0,
+    skipped: [],
+    publishedCount: 0,
+    republishedCount: 0,
+    delistedCount: 0,
+    daysSinceLastCommit: 0,
+    keepaliveCommitted: false,
+    themeAdvisory: {
+      id: 'GALA-2026-001',
+      severity: 'HIGH',
+      installedVersion: '0.0.5',
+      fixedVersion: '0.0.6',
+      url: 'https://gala67.com/security/GALA-2026-001'
+    }
+  });
+
+  assert.deepEqual(headings.at(-1), ['Theme security advisory', 2]);
+  assert.deepEqual(tables.at(-1), [
+    [{ data: 'Advisory', header: true }, 'GALA-2026-001'],
+    ['Severity', 'HIGH'],
+    ['Installed version', '0.0.5'],
+    ['Fixed version', '0.0.6']
+  ]);
+  assert.deepEqual(links, [[
+    'Advisory details', 'https://gala67.com/security/GALA-2026-001'
+  ]]);
 });

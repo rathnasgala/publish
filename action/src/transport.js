@@ -87,3 +87,88 @@ export async function sendReconciliation({
   }
   throw new ReconciliationTransportError('Reconciliation attempts exhausted');
 }
+
+export async function sendBuildFailure({
+  apiBaseUrl,
+  siteId,
+  siteSecret,
+  report,
+  fetchImpl = fetch
+}) {
+  const endpoint = new URL(`/v1/sites/${siteId}/build-reports`, apiBaseUrl);
+  if (endpoint.protocol !== 'https:' || endpoint.username !== '' || endpoint.password !== '') {
+    throw new TypeError('apiBaseUrl must use HTTPS without credentials');
+  }
+  const body = Buffer.from(JSON.stringify(report), 'utf8');
+  if (body.length > 256 * 1024) {
+    throw new ReconciliationTransportError('Build report exceeds 256 KiB', {
+      status: 413,
+      code: 'PAYLOAD_TOO_LARGE'
+    });
+  }
+  const response = await fetchImpl(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Gala-Signature': signReconciliationBody(siteId, body, siteSecret)
+    },
+    body
+  });
+  if (response.ok) return;
+  let payload = null;
+  try { payload = await response.json(); } catch { /* Status remains authoritative. */ }
+  throw new ReconciliationTransportError(
+    payload?.message ?? `Build report failed with HTTP ${response.status}`,
+    { status: response.status, code: payload?.code ?? null }
+  );
+}
+
+export async function readEngagementSnapshot({
+  apiBaseUrl,
+  siteId,
+  siteSecret,
+  runId,
+  runAttempt,
+  emittedAt,
+  fetchImpl = fetch
+}) {
+  const endpoint = new URL(`/v1/sites/${siteId}/engagement-snapshot/read`, apiBaseUrl);
+  if (endpoint.protocol !== 'https:' || endpoint.username !== '' || endpoint.password !== '') {
+    throw new TypeError('apiBaseUrl must use HTTPS without credentials');
+  }
+  const body = Buffer.from(JSON.stringify({ emittedAt, runId, runAttempt }), 'utf8');
+  const response = await fetchImpl(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Gala-Signature': signReconciliationBody(siteId, body, siteSecret)
+    },
+    body
+  });
+  let payload = null;
+  try { payload = await response.json(); } catch { /* Status remains authoritative. */ }
+  if (!response.ok) {
+    throw new ReconciliationTransportError(
+      payload?.message ?? `Engagement snapshot read failed with HTTP ${response.status}`,
+      { status: response.status, code: payload?.code ?? null }
+    );
+  }
+  if (payload?.schemaVersion !== 1
+      || typeof payload.refreshedAt !== 'string'
+      || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(payload.refreshedAt)
+      || payload.articles == null
+      || Array.isArray(payload.articles) || typeof payload.articles !== 'object') {
+    throw new ReconciliationTransportError('Engagement snapshot response is invalid');
+  }
+  for (const [articleId, counts] of Object.entries(payload.articles)) {
+    if (!/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/.test(articleId)
+        || counts == null || Array.isArray(counts) || typeof counts !== 'object'
+        || Object.keys(counts).sort().join(',') !== 'comments,reactions,views'
+        || !['reactions', 'comments', 'views'].every(
+      (field) => Number.isSafeInteger(counts[field]) && counts[field] >= 0
+    )) {
+      throw new ReconciliationTransportError('Engagement snapshot response is invalid');
+    }
+  }
+  return payload;
+}
