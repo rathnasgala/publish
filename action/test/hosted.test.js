@@ -43,6 +43,7 @@ site:
 hosting:
   canonicalBaseUrl: https://example.com
   pathPrefix: /
+  canonicalPolicy: self
 design:
   theme: editorial
 framework:

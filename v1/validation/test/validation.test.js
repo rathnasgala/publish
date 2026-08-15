@@ -324,7 +324,7 @@ test('normalizes the documented local site configuration contract', () => {
     siteAuthor: ' Anand ',
     defaultLanguage: 'fr-ca',
     timezone: 'America/Toronto',
-    shareTargets: ['X', 'email', 'x'],
+    shareTargets: ['LinkedIn', 'email', 'linkedin'],
     socialProfiles: [
       'github=https://github.com/example#ignored',
       'mastodon=https://social.example/@author'
@@ -334,7 +334,7 @@ test('normalizes the documented local site configuration contract', () => {
     siteAuthor: 'Anand',
     defaultLanguage: 'fr-CA',
     timezone: 'America/Toronto',
-    shareTargets: ['x', 'email'],
+    shareTargets: ['linkedin', 'email'],
     socialProfiles: {
       github: 'https://github.com/example',
       mastodon: 'https://social.example/@author'

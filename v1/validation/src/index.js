@@ -20,7 +20,7 @@ const RESERVED_SLUGS = new Set([
   'api', 'assets', 'media', 'page', 'deleted'
 ]);
 const SHARE_TARGETS = new Set([
-  'x', 'mastodon', 'bluesky', 'hacker-news', 'email'
+  'x', 'linkedin', 'mastodon', 'bluesky', 'reddit', 'hacker-news', 'whatsapp', 'email'
 ]);
 const SOCIAL_PROFILES = new Set([
   'github', 'x', 'linkedin', 'mastodon', 'bluesky', 'website', 'rss'
@@ -937,6 +937,9 @@ function siteLocation(config) {
       || config.schemaVersion !== 1 || config.hosting == null) {
     throw new TypeError('Unsupported site.config.yml schema');
   }
+  if (config.hosting.canonicalPolicy !== 'self') {
+    throw new TypeError('hosting.canonicalPolicy must be self in v1');
+  }
   return {
     canonicalBaseUrl: canonicalBaseOrigin(config.hosting.canonicalBaseUrl),
     pathPrefix: normalizePathPrefix(config.hosting.pathPrefix ?? '/')
@@ -1033,6 +1036,7 @@ export async function regenerateBuildManifest({
     }
   }
   const siteConfig = await regularYaml(siteRoot, configPath, 'site configuration');
+  await validatedThemeConfiguration(siteRoot, siteConfig);
   const location = siteLocation(siteConfig);
   const statistics = siteStatistics(siteConfig);
   const contact = normalizeContactConfiguration(siteConfig.contact);

@@ -27,13 +27,15 @@ function writeJson(file, value) {
   writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, { flag: 'w' });
 }
 
-function validateRelease() {
+function validateRelease({ checkBundle = true } = {}) {
   execute(process.execPath, [npmExecutable, '--prefix', 'v1/validation', 'test']);
   execute(process.execPath, [npmExecutable, '--prefix', 'action', 'test']);
   execute(process.execPath, [npmExecutable, '--prefix', 'v1/validation', 'run', 'lint']);
   execute(process.execPath, [npmExecutable, '--prefix', 'action', 'run', 'lint']);
-  execute(process.execPath, [npmExecutable, 'exec', '--yes', '--package=node@24', '--',
-    'node', npmExecutable, '--prefix', 'action', 'run', 'bundle:check']);
+  if (checkBundle) {
+    execute(process.execPath, [npmExecutable, 'exec', '--yes', '--package=node@24', '--',
+      'node', npmExecutable, '--prefix', 'action', 'run', 'bundle:check']);
+  }
 }
 
 function installLockedDependencies() {
@@ -46,7 +48,7 @@ if (branch.status !== 0) process.exit(branch.status ?? 1);
 if (branch.stdout.trim() !== 'main') throw new Error('Publish releases must be created from main');
 
 installLockedDependencies();
-validateRelease();
+validateRelease({ checkBundle: false });
 
 const validatorPath = 'v1/validation/package.json';
 const actionPath = 'action/package.json';

@@ -12,7 +12,7 @@ const rootGitignore = await readFile(new URL('../../.gitignore', import.meta.url
 test('push validates, increments both release artifacts, commits all files, and dispatches tag creation', () => {
   assert.equal(rootPackage.scripts.push, 'node action/scripts/push.js');
   const install = pushScript.indexOf("[npmExecutable, '--prefix', '.', 'ci', '--ignore-scripts']");
-  const firstValidation = pushScript.indexOf('validateRelease();');
+  const firstValidation = pushScript.indexOf('validateRelease({ checkBundle: false });');
   const versionWrite = pushScript.indexOf('validator.version = version');
   const bundle = pushScript.indexOf("'run', 'bundle:write']");
   const secondValidation = pushScript.lastIndexOf('validateRelease();');
@@ -32,6 +32,7 @@ test('push validates, increments both release artifacts, commits all files, and 
   assert.ok(push < dispatch);
   assert.doesNotMatch(pushScript, /git', \['tag'/);
   assert.match(pushScript, /npmExecutable, '--prefix', 'v1\/validation', 'test'/);
+  assert.match(pushScript, /if \(checkBundle\)/);
   assert.match(pushScript, /'node', npmExecutable, '--prefix', 'action', 'run', 'bundle:check'/);
   assert.doesNotMatch(pushScript, /copyFileSync/);
   assert.match(rootGitignore, /^node_modules\/$/m);
