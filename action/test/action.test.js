@@ -367,6 +367,26 @@ test('acknowledgement pins no-op, stale, and deferred reconciliation outcomes', 
   assert.ok(deferred.calls.includes('warn'));
 });
 
+test('a broken reconciliation envelope fails the run instead of deferring it', async () => {
+  // Every publication silently 404'd because the envelope contract broke, the resulting
+  // TypeError was downgraded to a warning, and GitHub reported a successful publish. Only a
+  // transport failure may be deferred; a contract break has to stop the run.
+  const broken = adapters({
+    sendReconciliation: async () => {
+      throw new TypeError('Invalid reconciliation envelope: required property \'themePackage\' not found');
+    }
+  });
+
+  await assert.rejects(
+    runAction(input({ operation: ActionOperation.ACKNOWLEDGE_DEPLOYMENT }), broken.value),
+    /required property 'themePackage' not found/
+  );
+
+  assert.ok(broken.calls.includes('report:FAILED'), 'the run must be reported as failed');
+  assert.ok(broken.calls.includes('build-failure'), 'the API must be told the build failed');
+  assert.ok(!broken.calls.includes('warn'), 'a contract break must not be downgraded to a warning');
+});
+
 test('acknowledgement maps the Java reconciliation count contract into action outputs', async () => {
   const fixture = adapters({
     sendReconciliation: async () => ({

@@ -44,13 +44,15 @@ async function reconcile(
       })
     });
   } catch (error) {
-    if (error instanceof ReconciliationTransportError && error.status === 409) {
-      return { stale: true };
-    }
-    const warning = error instanceof ReconciliationTransportError && error.status === 413
+    // Only a transport failure is worth deferring: the deployment is already live and the API
+    // can be told about it on a later run. Every other error is a defect in this action or a
+    // break in the envelope contract, and deferring those hid a total contract break behind a
+    // green build for every publication until someone opened the site and found a 404.
+    if (!(error instanceof ReconciliationTransportError)) throw error;
+    if (error.status === 409) return { stale: true };
+    adapters.warn(error.status === 413
       ? 'RECONCILIATION_PAYLOAD_LIMIT_APPROACHING_OR_EXCEEDED'
-      : 'RECONCILIATION_DEFERRED';
-    adapters.warn(warning, error);
+      : 'RECONCILIATION_DEFERRED', error);
     return null;
   }
 }
