@@ -93,3 +93,23 @@ execute('git', ['commit', '-m', commitMessage]);
 execute('git', ['push', 'origin', 'HEAD']);
 execute('gh', ['workflow', 'run', 'release-validator.yml', '--repo', 'rathnasgala/publish',
   '--ref', 'main', '-f', `version=${version}`]);
+
+// Publications resolve `publish.yml@v1`, not v${version}. Tagging a release therefore changes
+// nothing for any writer until promote-v1 moves that alias, and promotion is a deliberate,
+// canary-gated step. v1 sat on v0.0.3 through three releases because nobody was told this.
+process.stdout.write([
+  '',
+  `Released v${version}. No publication uses it yet.`,
+  '',
+  'Every publication resolves publish.yml@v1. Promote once both canaries have deployed',
+  `v${version} and you have their run IDs:`,
+  '',
+  '  gh run list --repo rathnasgala/smoke01 --workflow publish.yml --limit 5',
+  '  gh run list --repo rathnasgala/smoke02 --workflow publish.yml --limit 5',
+  '',
+  '  gh workflow run promote-v1.yml --repo rathnasgala/publish \\',
+  `    -f version=${version} -f smoke01-run-id=<id> -f smoke02-run-id=<id>`,
+  '',
+  '  gh api repos/rathnasgala/publish/tags --jq \'.[] | select(.name=="v1") | .commit.sha\'',
+  '',
+].join('\n'));
