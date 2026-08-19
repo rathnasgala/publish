@@ -126,6 +126,67 @@ test('engagement snapshot refresh writes one canonical file and is idempotent', 
   );
 });
 
+test('an unchanged publication keeps its deployed stamp so nothing is recorded', async () => {
+  // The reported defect: a site nobody was writing to produced a commit a day. The stamp was
+  // the only difference, so a commit was written, and that commit became the next run's HEAD —
+  // guaranteeing the next run differed too. The churn was its own cause.
+  const root = await fixture();
+  const adapters = createHostedAdapters({ now: () => new Date('2026-08-11T20:00:00Z') });
+  const manifest = {
+    schemaVersion: 1,
+    evaluationDate: '2026-08-11',
+    posts: [],
+    assignedContentIds: []
+  };
+  const staged = path.join(root, '.gala', 'build', 'publication-state.yml');
+
+  await adapters.stageDeployment(input(root), manifest, null);
+  assert.match(await readFile(staged, 'utf8'), new RegExp(`deployedCommitSha: ${SHA}`));
+
+  // That staged state is what the recording commit publishes, so it becomes the live state.
+  await mkdir(path.join(root, '.gala'), { recursive: true });
+  await writeFile(path.join(root, '.gala', 'publication-state.yml'), await readFile(staged, 'utf8'));
+
+  // Next scheduled run: new HEAD, identical content.
+  await adapters.stageDeployment(input(root, { commitSha: RECORDED_SHA }), manifest, null);
+
+  assert.match(
+    await readFile(staged, 'utf8'),
+    new RegExp(`deployedCommitSha: ${SHA}`),
+    'stamp must not advance when the publication is unchanged'
+  );
+});
+
+test('a changed publication does advance the deployed stamp', async () => {
+  const root = await fixture();
+  const adapters = createHostedAdapters({ now: () => new Date('2026-08-11T20:00:00Z') });
+  const staged = path.join(root, '.gala', 'build', 'publication-state.yml');
+  const empty = {
+    schemaVersion: 1, evaluationDate: '2026-08-11', posts: [], assignedContentIds: []
+  };
+
+  await adapters.stageDeployment(input(root), empty, null);
+  await writeFile(path.join(root, '.gala', 'publication-state.yml'), await readFile(staged, 'utf8'));
+
+  const published = {
+    ...empty,
+    posts: [{
+      id: ASSIGNED_ID,
+      slug: 'hello',
+      language: 'en',
+      publicationState: 'published',
+      source: ASSIGNED_PATH
+    }]
+  };
+  await adapters.stageDeployment(input(root, { commitSha: RECORDED_SHA }), published, null);
+
+  assert.match(
+    await readFile(staged, 'utf8'),
+    new RegExp(`deployedCommitSha: ${RECORDED_SHA}`),
+    'a real publication change must be recorded against the commit that produced it'
+  );
+});
+
 test('deployment stage is commit-bound and carries a floor override into acknowledgement', async () => {
   const root = await fixture();
   const adapters = createHostedAdapters({ now: () => new Date('2026-08-11T20:00:00Z') });

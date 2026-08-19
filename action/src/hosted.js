@@ -13,6 +13,17 @@ import {
   writePublicationState
 } from '@rathnasgala/content-validation';
 
+/**
+ * Whether two publication states describe the same publication, ignoring the deployed stamp.
+ *
+ * Only the posts carry meaning here; `deployedCommitSha` is a record of which commit produced
+ * them, so it cannot be evidence that they changed.
+ */
+function samePublications(current, next) {
+  if (current == null || typeof current.deployedCommitSha !== 'string') return false;
+  return JSON.stringify(current.posts ?? []) === JSON.stringify(next.posts ?? []);
+}
+
 const STAGE_PATH = path.join('.gala', 'build', 'deployment-stage.json');
 const NEXT_PUBLICATION_STATE_PATH = path.join('.gala', 'build', 'publication-state.yml');
 
@@ -298,12 +309,22 @@ export function createHostedAdapters({
     ),
     stageDeployment: async (input, manifest, floorGuardOverride, engagementSnapshotHash = null) => {
       const current = await readPublicationState(input.root, { allowMissing: true });
-      const next = derivePublicationState({
+      const derived = derivePublicationState({
         current,
         manifest,
         deployedOn: manifest.evaluationDate,
         deployedCommitSha: input.commitSha
       });
+      // Keep the previous stamp when nothing about the publication changed.
+      //
+      // Advancing it unconditionally makes the recording commit its own cause: the stamp is the
+      // only difference, so a commit is written, and that commit becomes the next run's HEAD,
+      // guaranteeing the next run differs too. A daily schedule then produces a commit a day
+      // forever on a site nobody is writing to. The stamp names the commit whose content was
+      // deployed, and on an unchanged site that is still the older commit.
+      const next = samePublications(current, derived)
+        ? { ...derived, deployedCommitSha: current.deployedCommitSha }
+        : derived;
       await writePublicationState(input.root, next, {
         relativePath: NEXT_PUBLICATION_STATE_PATH
       });
