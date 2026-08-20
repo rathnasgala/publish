@@ -328,6 +328,13 @@ jobs:
             git update-index --add --cacheinfo "100644,$content_blob,$content_path"
           done
           tree="$(git write-tree)"
+          # An unchanged site has nothing to record. Without this the scheduled run writes a
+          # commit whose tree is identical to its parent, every day, on a site nobody is
+          # writing to — and that commit becomes the next run's HEAD, so the churn feeds itself.
+          if [ "$tree" = "$(git rev-parse --verify "$parent^{tree}")" ]; then
+            echo 'Publication state is unchanged; no deployment record needed.'
+            exit 0
+          fi
           export GIT_AUTHOR_NAME='github-actions[bot]'
           export GIT_AUTHOR_EMAIL='41898282+github-actions[bot]@users.noreply.github.com'
           export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME"
