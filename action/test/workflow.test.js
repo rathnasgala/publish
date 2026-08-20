@@ -62,10 +62,6 @@ const promotion = await readFile(
   new URL('../.github/workflows/promote-v1.yml', import.meta.url),
   'utf8'
 );
-const canaryVerification = await readFile(
-  new URL('../scripts/verify-canaries.js', import.meta.url),
-  'utf8'
-);
 
 test('reusable workflow exposes the closed public contract with one explicit secret', () => {
   for (const input of [
@@ -162,31 +158,34 @@ test('release publishes or integrity-verifies before tagging only the immutable 
   assert.match(release, /grep -Fqx '# Gala publish distribution' README\.md/);
   assert.match(release, /git tag -a "v\$GALA_VERSION"/);
   assert.match(release, /git push origin "refs\/tags\/v\$GALA_VERSION"/);
-  assert.doesNotMatch(release, /git tag -f v1/);
-  assert.doesNotMatch(release, /refs\/tags\/v1/);
+  // A release that does not move v1 reaches nobody: every publication resolves
+  // publish.yml@v1, and the reusable workflow invokes rathnasgala/publish@v1 for the action
+  // itself. Keeping these separate stranded v1 on stale versions for five releases and meant
+  // no canary could ever exercise a change to the action code.
+  const advance = release.indexOf('Advance the v1 channel to this release');
+  assert.ok(advance > tag, 'v1 must advance only after the immutable tag exists');
+  assert.match(release, /target_commit="\$\(git rev-list -n 1 "v\$GALA_VERSION"\)"/);
+  assert.match(release, /git tag -f v1 "\$target_commit"/);
+  assert.match(release, /git push origin "\+refs\/tags\/v1"/);
 });
 
-test('v1 promotion is canary-gated and verifies exact topology composition', () => {
+test('pointing v1 at a version still proves that version is real and tested', () => {
+  // Releases advance v1 themselves, so this workflow is a deliberate channel move — most
+  // usefully backwards, off a bad release. It takes no canary run IDs: gating promotion on
+  // canaries could never verify the action itself, because the reusable workflow invokes
+  // rathnasgala/publish@v1 at every tag, so canaries always ran the previous action.
   const tests = promotion.indexOf('Run the complete date-gate and release suite');
-  const canaries = promotion.indexOf('Verify both deployed canaries and URL composition');
   const tag = promotion.indexOf('Advance the v1 channel');
-  assert.ok(tests > 0 && canaries > tests && tag > canaries);
+  assert.ok(tests > 0 && tag > tests, 'the suite must pass before the channel moves');
   assert.match(promotion, /environment: action-v1-promotion/);
   assert.match(promotion, /run: npm run test:release/);
-  assert.match(promotion, /node action\/scripts\/verify-canaries\.js/);
+  // The version must exist as an immutable tag whose packages agree with it.
+  assert.match(promotion, /test "\$\(git rev-list -n 1 "v\$GALA_VERSION"\)" = "\$GITHUB_SHA"/);
   assert.match(promotion, /target_commit="\$\(git rev-list -n 1 "v\$GALA_VERSION"\)"/);
   assert.match(promotion, /git tag -f v1 "\$target_commit"/);
   assert.match(promotion, /git push origin "\+refs\/tags\/v1"/);
-  assert.match(canaryVerification, /rathnasgala\/smoke01/);
-  assert.match(canaryVerification, /rathnasgala\/smoke02/);
-  assert.match(canaryVerification, /run\.event !== 'workflow_dispatch'/);
-  assert.match(canaryVerification, /workflow\.includes\(expectedReference\)/);
-  assert.match(canaryVerification, /<link rel="canonical" href=/);
-  assert.match(canaryVerification, /<loc>\$\{canary\.articleUrl\}<\/loc>/);
-  assert.match(canaryVerification, /hreflang="x-default"/);
-  assert.match(canaryVerification, /assets\/theme\.css/);
-  assert.match(canaryVerification, /assets\/interactions\.js/);
-  assert.match(canaryVerification, /\/engagement/);
+  assert.doesNotMatch(promotion, /smoke0[12]-run-id/);
+  assert.doesNotMatch(promotion, /verify-canaries/);
 });
 
 test('all release-owned third-party actions are immutable commit pins', () => {

@@ -1,19 +1,16 @@
 # GENERATED DISTRIBUTION COPY — edit the monorepo source, not this file.
-name: Promote verified release to v1
+# Point v1 at any released version.
+#
+# Releases advance v1 on their own, so this is not part of shipping. It exists to move the
+# channel deliberately — most usefully backwards, when a release turns out to be bad and every
+# publication needs to be off it now.
+name: Point v1 at a released version
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: Immutable semver already deployed by both canaries.
-        required: true
-        type: string
-      smoke01-run-id:
-        description: Successful provider-default canary workflow run ID.
-        required: true
-        type: string
-      smoke02-run-id:
-        description: Successful domain-root canary workflow run ID.
+        description: Released immutable semver to put the v1 channel on.
         required: true
         type: string
 
@@ -53,13 +50,6 @@ jobs:
 
       - name: Run the complete date-gate and release suite
         run: npm run test:release
-
-      - name: Verify both deployed canaries and URL composition
-        env:
-          GALA_VERSION: ${{ inputs.version }}
-          GALA_SMOKE01_RUN_ID: ${{ inputs.smoke01-run-id }}
-          GALA_SMOKE02_RUN_ID: ${{ inputs.smoke02-run-id }}
-        run: node action/scripts/verify-canaries.js
 
       - name: Advance the v1 channel
         env:

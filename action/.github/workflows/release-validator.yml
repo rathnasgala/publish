@@ -145,3 +145,19 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git tag -a "v$GALA_VERSION" -m "Gala publish v$GALA_VERSION"
           git push origin "refs/tags/v$GALA_VERSION"
+
+      # Every publication resolves publish.yml@v1, so a release that does not move v1 reaches
+      # nobody. Separating the two left v1 stranded on v0.0.3 for three releases and then on
+      # v0.0.7 for two more, and it meant no canary could ever exercise a change to the action
+      # itself, because the reusable workflow always invokes rathnasgala/publish@v1. The
+      # release suite above is the gate; passing it is what makes a version fit to ship.
+      - name: Advance the v1 channel to this release
+        env:
+          GALA_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          target_commit="$(git rev-list -n 1 "v$GALA_VERSION")"
+          test -n "$target_commit"
+          git tag -f v1 "$target_commit"
+          git push origin "+refs/tags/v1"

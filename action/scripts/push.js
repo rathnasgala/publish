@@ -94,22 +94,19 @@ execute('git', ['push', 'origin', 'HEAD']);
 execute('gh', ['workflow', 'run', 'release-validator.yml', '--repo', 'rathnasgala/publish',
   '--ref', 'main', '-f', `version=${version}`]);
 
-// Publications resolve `publish.yml@v1`, not v${version}. Tagging a release therefore changes
-// nothing for any writer until promote-v1 moves that alias, and promotion is a deliberate,
-// canary-gated step. v1 sat on v0.0.3 through three releases because nobody was told this.
+// The release workflow tags the version and moves v1 to it in the same job, so a successful
+// run is a shipped release. Splitting those apart is what left v1 stranded on old versions.
 process.stdout.write([
   '',
-  `Released v${version}. No publication uses it yet.`,
+  `Releasing v${version}. The release workflow tags it and advances v1 in the same run.`,
   '',
-  'Every publication resolves publish.yml@v1. Promote once both canaries have deployed',
-  `v${version} and you have their run IDs:`,
+  'Watch it, and confirm v1 landed on this version:',
   '',
-  '  gh run list --repo rathnasgala/smoke01 --workflow publish.yml --limit 5',
-  '  gh run list --repo rathnasgala/smoke02 --workflow publish.yml --limit 5',
-  '',
-  '  gh workflow run promote-v1.yml --repo rathnasgala/publish \\',
-  `    -f version=${version} -f smoke01-run-id=<id> -f smoke02-run-id=<id>`,
+  '  gh run watch --repo rathnasgala/publish "$(gh run list --repo rathnasgala/publish \\',
+  '    --workflow release-validator.yml --limit 1 --json databaseId --jq \'.[0].databaseId\')"',
   '',
   '  gh api repos/rathnasgala/publish/tags --jq \'.[] | select(.name=="v1") | .commit.sha\'',
+  '',
+  'Publications pick it up on their next scheduled run; dispatch one to check sooner.',
   '',
 ].join('\n'));
