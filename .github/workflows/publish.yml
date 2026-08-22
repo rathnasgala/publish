@@ -318,13 +318,20 @@ jobs:
             snapshot_blob="$(git hash-object -w -- .engagement-snapshot.json)"
             git update-index --add --cacheinfo "100644,$snapshot_blob,.engagement-snapshot.json"
           fi
+          # A moved source means the branch advanced while this run was building, usually because
+          # the writer published again. Recording anyway would write a tree assembled from content
+          # this run never deployed, so stopping is right. Failing is not: the deployment succeeded,
+          # and the newer run records for the newer commit. Exiting 1 here put a red run in the
+          # writer's repository for work that had published correctly — on the ordinary path of
+          # publishing shortly after creating a publication, which is when it happens every time.
           for content_path in "${assigned_paths[@]}"; do
             deployed_blob="$(git rev-parse "$GALA_DEPLOYED_COMMIT_SHA:$content_path")"
             parent_blob="$(git rev-parse "$parent:$content_path")"
-            test "$deployed_blob" = "$parent_blob" || {
-              echo "Assigned-ID source moved on the remote branch: $content_path" >&2
-              exit 1
-            }
+            if [ "$deployed_blob" != "$parent_blob" ]; then
+              echo "Assigned-ID source moved on the remote branch: $content_path"
+              echo 'A newer run will record this deployment; nothing to write here.'
+              exit 0
+            fi
             content_blob="$(git hash-object -w -- "$content_path")"
             git update-index --add --cacheinfo "100644,$content_blob,$content_path"
           done

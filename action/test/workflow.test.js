@@ -112,7 +112,20 @@ test('state persistence is post-deployment, secret-blind, and preserves caller H
   assert.match(persistence, /node - "\$stage" > "\$assigned_paths_file"/);
   assert.match(persistence, /mapfile -t assigned_paths < "\$assigned_paths_file"/);
   assert.doesNotMatch(persistence, /mapfile[^\n]+< <\(/);
-  assert.match(persistence, /test "\$deployed_blob" = "\$parent_blob"/);
+  /*
+   * A source that moved means the branch advanced while this run was building. The tree must not be
+   * written — it would be assembled from content this run never deployed — but the run must not
+   * fail either: the deployment succeeded, and the newer run records for the newer commit.
+   *
+   * Exiting 1 here put a red run in the writer's repository for work that had published correctly,
+   * every time someone published shortly after creating a publication. The comparison is asserted
+   * rather than the shell idiom that expresses it, so the guard can be written differently without
+   * this test objecting to the spelling.
+   */
+  assert.match(persistence, /"\$deployed_blob" != "\$parent_blob"/);
+  assert.match(persistence, /A newer run will record this deployment/);
+  const moved = persistence.slice(persistence.indexOf('deployed_blob'));
+  assert.doesNotMatch(moved.slice(0, moved.indexOf('content_blob')), /exit 1/);
   assert.match(persistence, /git update-index --add --cacheinfo "100644,\$content_blob,\$content_path"/);
   assert.match(persistence, /\[skip ci\]/);
   assert.doesNotMatch(persistence, /site-secret|secrets\./);
