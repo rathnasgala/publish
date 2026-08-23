@@ -68,11 +68,26 @@ const major = current.split('.')[0];
 
 // ---------------------------------------------------------------- what is available
 
+/*
+ * The range is `<major>.x`, not `^<major>.0.0`. Caret does not mean "same major" below 1.0: npm
+ * reads `^0.0.0` as exactly 0.0.0, so on a 0.x publication — which is every publication today —
+ * the query 404s and no update is ever found. `0.x` is `>=0.0.0 <1.0.0`, which is what was meant,
+ * and it carries the same meaning at every other major.
+ */
 let latest;
 try {
-  latest = run('npm', ['view', `${name}@^${major}.0.0`, 'version', '--json']).trim();
+  latest = run('npm', ['view', `${name}@${major}.x`, 'version', '--json']).trim();
 } catch (error) {
-  decline(`the registry could not be reached (${String(error.message).split('\n')[0]})`);
+  /*
+   * A registry that answers "no such version" is not a registry that is down, and reporting the
+   * two the same way is how the `^0.0.0` defect stayed invisible in the logs: every site reported
+   * an unreachable network while npm was answering perfectly.
+   */
+  const detail = String(error.message).split('\n')[0];
+  const missing = /E404|No match found/i.test(String(error.stderr ?? '') + detail);
+  decline(missing
+    ? `the registry has no ${major}.x release of ${name} (${detail})`
+    : `the registry could not be reached (${detail})`);
 }
 
 // `npm view` answers with a bare string for one match and an array for several.

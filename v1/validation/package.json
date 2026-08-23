@@ -1,12 +1,16 @@
 {
   "name": "@rathnasgala/content-validation",
-  "version": "0.0.14",
+  "version": "0.0.15",
   "private": false,
   "type": "module",
   "exports": {
     ".": "./src/index.js",
     "./package.json": "./package.json"
   },
+  "files": [
+    "src",
+    "contracts"
+  ],
   "scripts": {
     "test": "node --test",
     "lint": "node --check src/index.js && node --check src/reconciliation-contract.js && node --check test/reconciliation-contract.test.js"

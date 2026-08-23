@@ -46,7 +46,20 @@ shim() {
   mkdir -p "$WORK/bin"
   cat > "$WORK/bin/npm" <<SHIM
 #!/usr/bin/env bash
-if [ "\$1" = "view" ]; then printf '"%s"' "\$GALA_FAKE_LATEST"; exit 0; fi
+if [ "\$1" = "view" ]; then
+  # Answer the way npm does: resolve the requested range rather than ignoring it. A shim that
+  # replies to any range hides exactly the defect that shipped — \`^0.0.0\` 404s on every 0.x
+  # publication, so no site could ever update — and lets the suite pass on a script that cannot work.
+  spec="\$2"; range="\${spec##*@}"
+  node -e '
+    const [range, latest] = process.argv.slice(1);
+    const major = latest.split(".")[0];
+    const ok = range === major + ".x" || range === "*" || range === "latest";
+    if (!ok) { process.stderr.write("npm error code E404\nnpm error 404 No match found for version " + range + "\n"); process.exit(1); }
+    process.stdout.write(JSON.stringify([latest]));
+  ' "\$range" "\$GALA_FAKE_LATEST" || exit 1
+  exit 0
+fi
 if [ "\$1" = "pack" ]; then cp "$WORK/theme-\$GALA_FAKE_LATEST.tgz" "\$4/theme.tgz" 2>/dev/null; echo theme.tgz; exit 0; fi
 exit 0
 SHIM
@@ -73,27 +86,27 @@ site() {
 }
 
 echo "— building a package and a publication —"
-build_package "9.9.9" || { echo "FAIL  could not stage a package"; exit 1; }
+build_package "0.9.9" || { echo "FAIL  could not stage a package"; exit 1; }
 shim
 export PATH="$WORK/bin:$PATH"
 
 # ================================================================ already current
-site "9.9.9"
-export GALA_FAKE_LATEST=9.9.9
+site "0.9.9"
+export GALA_FAKE_LATEST=0.9.9
 out="$(cd "$WORK/site" && node "$SCRIPT" 2>&1)"
-contains "an up-to-date site does nothing" "$out" "Framework is current at 9.9.9"
+contains "an up-to-date site does nothing" "$out" "Framework is current at 0.9.9"
 
 # ================================================================ a newer release
 site "0.0.15"
-export GALA_FAKE_LATEST=9.9.9
+export GALA_FAKE_LATEST=0.9.9
 before_custom="$(cat "$WORK/site/custom.css")"
 out="$(cd "$WORK/site" && node "$SCRIPT" 2>&1)"
-contains "an update is applied" "$out" "Framework updated to 9.9.9"
-check "the pin moved" "$(node -e "console.log(JSON.parse(require('fs').readFileSync('$WORK/site/.gala/managed-files.json','utf8')).themePackage.version)")" "9.9.9"
-check "site.config.yml pin moved" "$(grep -A 2 'themePackage:' "$WORK/site/site.config.yml" | grep -o '9\.9\.9' | head -1)" "9.9.9"
+contains "an update is applied" "$out" "Framework updated to 0.9.9"
+check "the pin moved" "$(node -e "console.log(JSON.parse(require('fs').readFileSync('$WORK/site/.gala/managed-files.json','utf8')).themePackage.version)")" "0.9.9"
+check "site.config.yml pin moved" "$(grep -A 2 'themePackage:' "$WORK/site/site.config.yml" | grep -o '0\.9\.9' | head -1)" "0.9.9"
 check "the writer's file is untouched" "$(cat "$WORK/site/custom.css")" "$before_custom"
 check "the writer's post is untouched" "$(test -f "$WORK/site/content/posts/mine/index.en.md" && echo present)" "present"
-contains "it is recorded as a commit" "$(cd "$WORK/site" && git log -1 --pretty=%s)" "Update the Gala framework to 9.9.9"
+contains "it is recorded as a commit" "$(cd "$WORK/site" && git log -1 --pretty=%s)" "Update the Gala framework to 0.9.9"
 check "nothing is left uncommitted" "$(cd "$WORK/site" && git status --porcelain | wc -l | tr -d ' ')" "0"
 
 # ================================================================ opt out
@@ -106,11 +119,11 @@ check "and nothing changed" "$(cd "$WORK/site" && git status --porcelain | wc -l
 site "0.0.15"
 node -e "
   const f=require('fs');
-  const p='$WORK/pkg-9.9.9/payload/src/assets/interactions.js';
+  const p='$WORK/pkg-0.9.9/payload/src/assets/interactions.js';
   f.writeFileSync(p, f.readFileSync(p,'utf8') + '\n// tampered\n');
 "
-(cd "$WORK/pkg-9.9.9" && tar -czf "$WORK/theme-9.9.9.tgz" --transform "s,^\\.,package," . 2>/dev/null \
-  || tar -czf "$WORK/theme-9.9.9.tgz" -s ",^\\.,package," . 2>/dev/null)
+(cd "$WORK/pkg-0.9.9" && tar -czf "$WORK/theme-0.9.9.tgz" --transform "s,^\\.,package," . 2>/dev/null \
+  || tar -czf "$WORK/theme-0.9.9.tgz" -s ",^\\.,package," . 2>/dev/null)
 out="$(cd "$WORK/site" && node "$SCRIPT" 2>&1)"
 contains "a tampered file is refused" "$out" "does not match its own manifest"
 check "and nothing was written" "$(cd "$WORK/site" && git status --porcelain | wc -l | tr -d ' ')" "0"
