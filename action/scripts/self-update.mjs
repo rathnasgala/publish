@@ -191,12 +191,64 @@ for (const line of changed.split('\n')) say(`  ${line}`);
 
 run('git', ['config', 'user.name', 'gala-publish[bot]']);
 run('git', ['config', 'user.email', 'publish@gala67.com']);
+
+/*
+ * The record is built on top of the branch as it stands on the remote, not on top of this
+ * checkout.
+ *
+ * The publish workflow checks out one exact content commit and the action refuses to build unless
+ * HEAD is still that commit — the guarantee being that what gets published is precisely the commit
+ * that was asked for. By the time this runs the deployment record has already been pushed, so the
+ * checkout is behind the branch, and committing onto it would push a commit that silently drops
+ * that record.
+ *
+ * Resetting the index to the remote tip and staging only the framework's own files keeps the
+ * commit to exactly what this script changed.
+ */
+const branch = (process.env.GALA_UPDATE_BRANCH ?? '').trim()
+  || (() => {
+    try { return run('git', ['rev-parse', '--abbrev-ref', 'HEAD']).trim(); } catch { return ''; }
+  })();
+
+let remote = true;
+try { run('git', ['remote', 'get-url', 'origin']); } catch { remote = false; }
+const publishable = remote && branch !== '' && branch !== 'HEAD';
+
+if (publishable) {
+  try {
+    run('git', ['fetch', '--depth', '1', 'origin', branch]);
+    run('git', ['reset', '--mixed', 'FETCH_HEAD']);
+  } catch (error) {
+    decline(`the branch could not be refreshed (${String(error.message).split('\n')[0]})`);
+  }
+}
+
 run('git', ['add', '--', MANIFEST, CONFIG, ...staged.map((file) => file.relative)]);
+
+// After the reset the index may hold nothing new — the update can already be on the branch.
+if (run('git', ['diff', '--cached', '--name-only']).trim() === '') {
+  say(`Framework ${newest} is already recorded on ${branch}.`);
+  process.exit(0);
+}
+
 run('git', ['-c', 'core.hooksPath=/dev/null', 'commit', '-m',
   `Update the Gala framework to ${newest}\n\n`
   + 'Applied automatically by the publish workflow. Only files listed in\n'
   + '.gala/managed-files.json are touched; every one was verified against the\n'
   + `package's own hashes before it was written.\n\n`
   + 'Set the repository variable GALA_FRAMEWORK_AUTO_UPDATE to false to stop this.']);
+
+/*
+ * Pushed, or the update never leaves the runner: the previous version of this script committed and
+ * stopped there, so the framework was rewritten on a throwaway checkout every single run and no
+ * publication ever actually moved forward.
+ */
+if (publishable) {
+  try {
+    run('git', ['push', 'origin', `HEAD:refs/heads/${branch}`]);
+  } catch (error) {
+    decline(`the update could not be pushed (${String(error.message).split('\n')[0]})`);
+  }
+}
 
 say(`Framework updated to ${newest}.`);

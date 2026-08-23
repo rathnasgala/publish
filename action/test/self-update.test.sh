@@ -140,6 +140,53 @@ code=$?
 contains "an unreachable registry is survivable" "$out" "Framework update skipped"
 check "and it exits cleanly, so the publish continues" "$code" "0"
 
+# ================================================================ a publication with a remote
+#
+# The case that broke every publish in production. The workflow checks out one exact content
+# commit; by the time the updater runs, the deployment record has already been pushed, so the
+# branch has moved on. The update has to land on top of that record and reach the remote — the
+# first version committed onto the stale checkout and never pushed at all, which both tripped the
+# action's HEAD guard and meant no publication ever moved forward.
+# The corrupted-package case rewrote this tarball in place; serve a clean one again.
+build_package "0.9.9" || { echo "FAIL  could not restage"; exit 1; }
+shim
+site "0.0.15"
+export GALA_FAKE_LATEST=0.9.9
+ORIGIN="$WORK/origin.git"
+rm -rf "$ORIGIN"
+git init -q --bare "$ORIGIN"
+(cd "$WORK/site" && git remote add origin "$ORIGIN" && git push -q origin HEAD:refs/heads/main)
+
+# The deployment record lands on the branch after this checkout was taken, exactly as the workflow
+# does it: a commit pushed straight to the branch without moving the local HEAD.
+CLONE="$WORK/recorder"
+git clone -q "$ORIGIN" "$CLONE"
+(cd "$CLONE" && git config user.email t@t && git config user.name t \
+  && echo 'recorded' > deployment-record.txt && git add -A \
+  && git -c core.hooksPath=/dev/null commit -qm 'chore(gala): record successful deployment' \
+  && git push -q origin HEAD:refs/heads/main)
+
+out="$(cd "$WORK/site" && GALA_UPDATE_BRANCH=main node "$SCRIPT" 2>&1)"
+contains "an update reaches the remote" "$out" "Framework updated to 0.9.9"
+
+VERIFY="$WORK/verify"
+rm -rf "$VERIFY"
+git clone -q "$ORIGIN" "$VERIFY"
+check "the update is on the branch" \
+  "$(cd "$VERIFY" && node -e "console.log(JSON.parse(require('fs').readFileSync('.gala/managed-files.json','utf8')).themePackage.version)")" \
+  "0.9.9"
+check "and it did not discard the deployment record" \
+  "$(cd "$VERIFY" && test -f deployment-record.txt && echo present || echo lost)" "present"
+check "the writer's post survived the push" \
+  "$(cd "$VERIFY" && test -f content/posts/mine/index.en.md && echo present || echo lost)" "present"
+
+# Running again against a branch that already carries the update must be a no-op, not a second
+# empty commit on every scheduled run.
+out="$(cd "$WORK/site" && GALA_UPDATE_BRANCH=main node "$SCRIPT" 2>&1)"
+check "a second run adds nothing" \
+  "$(cd "$VERIFY" && git fetch -q origin main && git rev-list --count FETCH_HEAD)" \
+  "$(cd "$VERIFY" && git rev-list --count FETCH_HEAD)"
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
