@@ -79,6 +79,16 @@ site() {
     const m=JSON.parse(f.readFileSync('$dir/.gala/managed-files.json','utf8'));
     m.themePackage.version='$version'; f.writeFileSync('$dir/.gala/managed-files.json',JSON.stringify(m,null,2)+'\n');
   "
+  # An older publication's budgets: what a site scaffolded before the reader runtime carries. The
+  # build refuses to run when the managed assets exceed these, so an update that ships more bytes
+  # without raising them hands the writer a repository that cannot build.
+  node -e "
+    const f=require('fs');
+    const p='$dir/site.config.yml';
+    f.writeFileSync(p, f.readFileSync(p,'utf8')
+      .replace(/managedJavaScriptBytes: \d+/, 'managedJavaScriptBytes: 32768')
+      .replace(/managedCssBytes: \d+/, 'managedCssBytes: 16384'));
+  "
   # A writer's own file, which must survive untouched.
   echo "# my notes" > "$dir/custom.css"
   mkdir -p "$dir/content/posts/mine"; echo "---" > "$dir/content/posts/mine/index.en.md"
@@ -104,6 +114,18 @@ out="$(cd "$WORK/site" && node "$SCRIPT" 2>&1)"
 contains "an update is applied" "$out" "Framework updated to 0.9.9"
 check "the pin moved" "$(node -e "console.log(JSON.parse(require('fs').readFileSync('$WORK/site/.gala/managed-files.json','utf8')).themePackage.version)")" "0.9.9"
 check "site.config.yml pin moved" "$(grep -A 2 'themePackage:' "$WORK/site/site.config.yml" | grep -o '0\.9\.9' | head -1)" "0.9.9"
+# The ceiling moves with the files. Without this the update lands and the very next build fails
+# with "Managed JavaScript performance budget exceeded", which is what every publication did.
+check "the JavaScript budget was raised to what the runtime needs" \
+  "$(grep -o 'managedJavaScriptBytes: [0-9]*' "$WORK/site/site.config.yml")" \
+  "managedJavaScriptBytes: $(node -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync('$TEMPLATE/.gala/managed-files.json','utf8')).requiredBudgets.managedJavaScriptBytes))")"
+check "the CSS budget was raised too" \
+  "$(grep -o 'managedCssBytes: [0-9]*' "$WORK/site/site.config.yml")" \
+  "managedCssBytes: $(node -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync('$TEMPLATE/.gala/managed-files.json','utf8')).requiredBudgets.managedCssBytes))")"
+# A budget the writer set above the minimum is theirs, and is left alone.
+check "an unrelated budget is untouched" \
+  "$(grep -o 'ordinaryHtmlBytes: [0-9]*' "$WORK/site/site.config.yml")" \
+  "ordinaryHtmlBytes: 32768"
 check "the writer's file is untouched" "$(cat "$WORK/site/custom.css")" "$before_custom"
 check "the writer's post is untouched" "$(test -f "$WORK/site/content/posts/mine/index.en.md" && echo present)" "present"
 contains "it is recorded as a commit" "$(cd "$WORK/site" && git log -1 --pretty=%s)" "Update the Gala framework to 0.9.9"

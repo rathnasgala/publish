@@ -171,11 +171,33 @@ writeFileSync(MANIFEST, `${JSON.stringify(incoming, null, 2)}\n`);
  */
 if (existsSync(CONFIG)) {
   const config = readFileSync(CONFIG, 'utf8');
-  const pinned = config.replace(
+  let updated = config.replace(
     /^(\s*version:\s*)["']?\d+\.\d+\.\d+["']?(\s*)$/m,
     (line, prefix, trailing) => (config.includes('themePackage:') ? `${prefix}${newest}${trailing}` : line),
   );
-  if (pinned !== config) writeFileSync(CONFIG, pinned);
+
+  /*
+   * The ceiling has to move with the files.
+   *
+   * A publication's performance budgets live in its own `site.config.yml`, and the build refuses
+   * to run when the managed assets exceed them. So delivering a larger runtime without raising the
+   * budget hands the writer a repository that cannot build — which is exactly what happened when
+   * the reader runtime landed and every site failed with "Managed JavaScript performance budget
+   * exceeded" on the run after the update.
+   *
+   * Only ever raised, and only to what the incoming manifest says its own files need. A writer who
+   * has set a budget higher than the minimum has done so deliberately and keeps it.
+   */
+  for (const [budget, minimum] of Object.entries(incoming.requiredBudgets ?? {})) {
+    if (!Number.isSafeInteger(minimum) || minimum <= 0) continue;
+    updated = updated.replace(
+      new RegExp(`^(\\s*${budget}:\\s*)(\\d+)(\\s*)$`, 'm'),
+      (line, prefix, current, trailing) =>
+        (Number(current) < minimum ? `${prefix}${minimum}${trailing}` : line),
+    );
+  }
+
+  if (updated !== config) writeFileSync(CONFIG, updated);
 }
 
 // ---------------------------------------------------------------- record it
