@@ -60,9 +60,14 @@ function envelope(build = manifest(), emittedAt = '2026-08-11T20:00:00.000Z') {
     runAttempt: 1,
     emittedAt,
     runStatus: 'SUCCESS',
-    daysSinceLastCommit: 3
+    daysSinceLastCommit: 3,
+    deploymentCommitSha: 'd'.repeat(40)
   });
 }
+
+test('signs the exact deployed Pages commit into reconciliation', () => {
+  assert.equal(envelope().deploymentCommitSha, 'd'.repeat(40));
+});
 
 test('hashes exact parsed body bytes after stripping one leading BOM', () => {
   assert.equal(markdownBodyHash('\uFEFFBody\r\n'), markdownBodyHash('Body\r\n'));
@@ -172,7 +177,8 @@ test('re-stamps, reserializes, and re-signs each retry over transmitted gzip byt
       return requests.length === 1
         ? { ok: false, status: 503, json: async () => ({ code: 'UNAVAILABLE' }) }
         : { ok: true, status: 200, json: async () => ({ noOp: false }) };
-    }
+    },
+    wait: async () => {}
   });
   assert.deepEqual(result, { noOp: false });
   assert.equal(requests.length, 2);
@@ -187,6 +193,25 @@ test('re-stamps, reserializes, and re-signs each retry over transmitted gzip byt
     requests[0].request.headers['Gala-Signature'],
     requests[1].request.headers['Gala-Signature']
   );
+});
+
+test('reconciliation exhausts bounded retries instead of returning a green partial result', async () => {
+  let requests = 0;
+  const waits = [];
+  await assert.rejects(() => sendReconciliation({
+    apiBaseUrl: 'https://api.example.com',
+    siteId: SITE,
+    siteSecret: SECRET,
+    envelopeForAttempt: () => envelope(),
+    maxAttempts: 4,
+    wait: async (milliseconds) => { waits.push(milliseconds); },
+    fetchImpl: async () => {
+      requests += 1;
+      return { ok: false, status: 503, json: async () => ({ code: 'UNAVAILABLE' }) };
+    }
+  }), /HTTP 503/);
+  assert.equal(requests, 4);
+  assert.deepEqual(waits, [1_000, 2_000, 4_000]);
 });
 
 test('rejects insecure API origins before transmitting the site secret signature', async () => {
@@ -224,6 +249,34 @@ test('signs the exact bounded build-failure body for the dedicated route', async
   assert.equal(request.url, `https://api.example.com/v1/sites/${SITE}/build-reports`);
   assert.deepEqual(JSON.parse(request.body), report);
   assert.equal(request.headers['Gala-Signature'], signReconciliationBody(SITE, request.body, SECRET));
+});
+
+test('retries signed workflow failure reports across transient API errors', async () => {
+  let requests = 0;
+  const waits = [];
+  await sendBuildFailure({
+    apiBaseUrl: 'https://api.example.com',
+    siteId: SITE,
+    siteSecret: SECRET,
+    report: {
+      emittedAt: '2026-08-11T20:00:00.000Z',
+      runId: 42,
+      runAttempt: 1,
+      commitSha: SHA,
+      validatorVersion: '0.0.4',
+      errors: [{ source: 'workflow', code: 'DEPLOYMENT_FAILED', message: 'push failed' }]
+    },
+    maxAttempts: 3,
+    wait: async (milliseconds) => { waits.push(milliseconds); },
+    fetchImpl: async () => {
+      requests += 1;
+      return requests < 3
+        ? { ok: false, status: 503, json: async () => ({ code: 'UNAVAILABLE' }) }
+        : { ok: true, status: 202 };
+    }
+  });
+  assert.equal(requests, 3);
+  assert.deepEqual(waits, [1_000, 2_000]);
 });
 
 test('reads the signed engagement snapshot without placing credentials in the body', async () => {
@@ -343,7 +396,7 @@ test('owned deployment stages only after the floor passes and leaves deployment 
   ]);
 });
 
-test('acknowledgement pins no-op, stale, and deferred reconciliation outcomes', async () => {
+test('acknowledgement pins no-op and stale outcomes but fails exhausted transport', async () => {
   const noOp = adapters({ sendReconciliation: async () => ({ noOp: true }) });
   assert.equal((await runAction(input({ operation: ActionOperation.ACKNOWLEDGE_DEPLOYMENT }), noOp.value)).outcome, 'NO_OP');
 
@@ -357,14 +410,35 @@ test('acknowledgement pins no-op, stale, and deferred reconciliation outcomes', 
     'SKIPPED_STALE'
   );
 
-  const deferred = adapters({
+  const unavailable = adapters({
     sendReconciliation: async () => {
       throw new ReconciliationTransportError('unavailable', { status: 503 });
     }
   });
-  const result = await runAction(input({ operation: ActionOperation.ACKNOWLEDGE_DEPLOYMENT }), deferred.value);
-  assert.equal(result.outcome, 'PARTIAL');
-  assert.ok(deferred.calls.includes('warn'));
+  await assert.rejects(
+    runAction(input({ operation: ActionOperation.ACKNOWLEDGE_DEPLOYMENT }), unavailable.value),
+    /unavailable/
+  );
+  assert.ok(unavailable.calls.includes('build-failure'));
+  assert.ok(unavailable.calls.includes('report:FAILED'));
+});
+
+test('reports a workflow-owned deployment failure without rebuilding the publication', async () => {
+  let failure;
+  const fixture = adapters({
+    sendBuildFailure: async ({ report }) => { failure = report; }
+  });
+  const result = await runAction(input({
+    operation: ActionOperation.REPORT_FAILURE,
+    failureCode: 'DEPLOYMENT_FAILED',
+    failureMessage: 'The gh-pages push failed.'
+  }), fixture.value);
+
+  assert.equal(result.outcome, 'FAILED');
+  assert.deepEqual(failure.errors, [{
+    source: 'workflow', code: 'DEPLOYMENT_FAILED', message: 'The gh-pages push failed.'
+  }]);
+  assert.deepEqual(fixture.calls, ['report:FAILED']);
 });
 
 test('a broken reconciliation envelope fails the run instead of deferring it', async () => {
@@ -503,6 +577,7 @@ test('acknowledgement signs the live deployed SHA rather than the reconstruction
     operation: ActionOperation.ACKNOWLEDGE_DEPLOYMENT,
     mode: BuildMode.BUILD_ONLY,
     deployedCommitSha,
+    deploymentCommitSha: 'd'.repeat(40),
     recordedStateSha: SHA
   }), fixture.value);
   assert.equal(envelope.commitSha, deployedCommitSha);

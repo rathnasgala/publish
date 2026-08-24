@@ -21,7 +21,10 @@ function values(overrides = {}) {
     'keepalive-threshold-days': '',
     'floor-guard-override-commit-sha': '',
     'deployed-commit-sha': '',
+    'deployment-commit-sha': '',
     'recorded-state-sha': '',
+    'failure-code': '',
+    'failure-message': '',
     'run-id': '42',
     'run-attempt': '1',
     ...overrides
@@ -48,17 +51,49 @@ test('accepts acknowledgement only in build-only with explicit deployed and reco
     operation: 'acknowledge-deployment',
     mode: 'build-only',
     'deployed-commit-sha': 'b'.repeat(40),
+    'deployment-commit-sha': 'd'.repeat(40),
     'recorded-state-sha': 'c'.repeat(40)
   });
   assert.equal(acknowledged.commitSha, 'c'.repeat(40));
   assert.equal(acknowledged.deployedCommitSha, 'b'.repeat(40));
+  assert.equal(acknowledged.deploymentCommitSha, 'd'.repeat(40));
   assert.throws(() => parse({
     operation: 'acknowledge-deployment', mode: 'build-and-deploy',
     'deployed-commit-sha': 'b'.repeat(40),
     'recorded-state-sha': 'c'.repeat(40)
   }), /requires mode build-only/);
   assert.throws(() => parse({ operation: 'acknowledge-deployment' }), /deployment.*SHAs|required lowercase/);
+  assert.throws(() => parse({
+    operation: 'acknowledge-deployment',
+    mode: 'build-only',
+    'deployed-commit-sha': 'b'.repeat(40),
+    'recorded-state-sha': 'c'.repeat(40)
+  }), /deployment-commit-sha.*required/);
   assert.throws(() => parse({ 'deployed-commit-sha': 'b'.repeat(40) }), /accepted only/);
+  assert.throws(() => parse({ 'deployment-commit-sha': 'not-a-sha' }), /deployment-commit-sha/);
+});
+
+test('accepts only a complete bounded workflow failure report', () => {
+  const reported = parse({
+    operation: 'report-failure',
+    mode: 'build-only',
+    'failure-code': 'DEPLOYMENT_FAILED',
+    'failure-message': 'The gh-pages push failed.'
+  });
+  assert.equal(reported.commitSha, SHA);
+  assert.equal(reported.failureCode, 'DEPLOYMENT_FAILED');
+  assert.equal(reported.failureMessage, 'The gh-pages push failed.');
+  assert.throws(() => parse({ operation: 'report-failure' }), /failure-code is required/);
+  assert.throws(() => parse({
+    operation: 'report-failure',
+    'failure-code': 'not valid',
+    'failure-message': 'failed'
+  }), /failure-code/);
+  assert.throws(() => parse({
+    operation: 'build',
+    'failure-code': 'DEPLOYMENT_FAILED',
+    'failure-message': 'failed'
+  }), /accepted only for report-failure/);
 });
 
 test('rejects invalid timezone, traversal, identifiers, and numeric inputs', () => {
@@ -81,6 +116,7 @@ test('accepts floor override confirmation only for current build-and-deploy SHA'
     operation: 'acknowledge-deployment',
     mode: 'build-only',
     'deployed-commit-sha': SHA,
+    'deployment-commit-sha': SHA,
     'recorded-state-sha': SHA,
     'floor-guard-override-commit-sha': SHA
   }), /only for build-and-deploy/);

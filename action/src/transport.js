@@ -1,9 +1,15 @@
 import { createHmac } from 'node:crypto';
+import { setTimeout as waitFor } from 'node:timers/promises';
 import { gzipSync } from 'node:zlib';
 
 const MAX_TRANSMITTED_BYTES = 2 * 1024 * 1024;
 const MAX_EXPANDED_BYTES = 10 * 1024 * 1024;
-const RETRYABLE_STATUS = new Set([500, 502, 503, 504]);
+const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
+const DEFAULT_MAX_ATTEMPTS = 6;
+
+async function retryPause(wait, attempt) {
+  await wait(1_000 * (2 ** (attempt - 1)));
+}
 
 export class ReconciliationTransportError extends Error {
   constructor(message, { status = null, code = null } = {}) {
@@ -45,7 +51,8 @@ export async function sendReconciliation({
   envelopeForAttempt,
   fetchImpl = fetch,
   gzipThreshold = 1024,
-  maxAttempts = 2
+  maxAttempts = DEFAULT_MAX_ATTEMPTS,
+  wait = waitFor
 }) {
   const endpoint = new URL(`/v1/sites/${siteId}/reconciliation`, apiBaseUrl);
   if (endpoint.protocol !== 'https:' || endpoint.username !== '' || endpoint.password !== '') {
@@ -69,7 +76,10 @@ export async function sendReconciliation({
     try {
       response = await fetchImpl(endpoint, { method: 'POST', headers, body: transmitted.body });
     } catch (error) {
-      if (attempt < maxAttempts) continue;
+      if (attempt < maxAttempts) {
+        await retryPause(wait, attempt);
+        continue;
+      }
       throw new ReconciliationTransportError('Reconciliation API is unreachable', { code: 'UNREACHABLE' });
     }
     let payload = null;
@@ -79,7 +89,10 @@ export async function sendReconciliation({
       // Status remains authoritative when a proxy returns a non-JSON error body.
     }
     if (response.ok) return payload;
-    if (RETRYABLE_STATUS.has(response.status) && attempt < maxAttempts) continue;
+    if (RETRYABLE_STATUS.has(response.status) && attempt < maxAttempts) {
+      await retryPause(wait, attempt);
+      continue;
+    }
     throw new ReconciliationTransportError(
       payload?.message ?? `Reconciliation failed with HTTP ${response.status}`,
       { status: response.status, code: payload?.code ?? null }
@@ -93,7 +106,9 @@ export async function sendBuildFailure({
   siteId,
   siteSecret,
   report,
-  fetchImpl = fetch
+  fetchImpl = fetch,
+  maxAttempts = DEFAULT_MAX_ATTEMPTS,
+  wait = waitFor
 }) {
   const endpoint = new URL(`/v1/sites/${siteId}/build-reports`, apiBaseUrl);
   if (endpoint.protocol !== 'https:' || endpoint.username !== '' || endpoint.password !== '') {
@@ -106,21 +121,34 @@ export async function sendBuildFailure({
       code: 'PAYLOAD_TOO_LARGE'
     });
   }
-  const response = await fetchImpl(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Gala-Signature': signReconciliationBody(siteId, body, siteSecret)
-    },
-    body
-  });
-  if (response.ok) return;
-  let payload = null;
-  try { payload = await response.json(); } catch { /* Status remains authoritative. */ }
-  throw new ReconciliationTransportError(
-    payload?.message ?? `Build report failed with HTTP ${response.status}`,
-    { status: response.status, code: payload?.code ?? null }
-  );
+  const headers = {
+    'Content-Type': 'application/json',
+    'Gala-Signature': signReconciliationBody(siteId, body, siteSecret)
+  };
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    let response;
+    try {
+      response = await fetchImpl(endpoint, { method: 'POST', headers, body });
+    } catch (error) {
+      if (attempt < maxAttempts) {
+        await retryPause(wait, attempt);
+        continue;
+      }
+      throw new ReconciliationTransportError('Build report API is unreachable', { code: 'UNREACHABLE' });
+    }
+    if (response.ok) return;
+    let payload = null;
+    try { payload = await response.json(); } catch { /* Status remains authoritative. */ }
+    if (RETRYABLE_STATUS.has(response.status) && attempt < maxAttempts) {
+      await retryPause(wait, attempt);
+      continue;
+    }
+    throw new ReconciliationTransportError(
+      payload?.message ?? `Build report failed with HTTP ${response.status}`,
+      { status: response.status, code: payload?.code ?? null }
+    );
+  }
+  throw new ReconciliationTransportError('Build report attempts exhausted');
 }
 
 export async function readEngagementSnapshot({

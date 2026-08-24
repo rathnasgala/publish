@@ -6,6 +6,7 @@
     "payload": {
       "schemaVersion": 1,
       "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "deploymentCommitSha": "dddddddddddddddddddddddddddddddddddddddd",
       "runId": 42,
       "runAttempt": 2,
       "emittedAt": "2026-08-11T20:00:00Z",
@@ -41,6 +42,7 @@
     "payload": {
       "schemaVersion": 1,
       "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "deploymentCommitSha": "dddddddddddddddddddddddddddddddddddddddd",
       "runId": 42,
       "runAttempt": 2,
       "emittedAt": "not-a-date",
@@ -57,6 +59,7 @@
     "payload": {
       "schemaVersion": 1,
       "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "deploymentCommitSha": "dddddddddddddddddddddddddddddddddddddddd",
       "runId": 42,
       "runAttempt": 2,
       "emittedAt": "2026-08-11T20:00:00.123456789Z",
@@ -73,6 +76,7 @@
     "payload": {
       "schemaVersion": 1,
       "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "deploymentCommitSha": "dddddddddddddddddddddddddddddddddddddddd",
       "runId": 42,
       "runAttempt": 2,
       "emittedAt": "2026-08-11T20:00:00+0545",
@@ -89,6 +93,7 @@
     "payload": {
       "schemaVersion": 1,
       "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "deploymentCommitSha": "dddddddddddddddddddddddddddddddddddddddd",
       "runId": 42,
       "runAttempt": 2,
       "emittedAt": "2026-08-11T20:00:60Z",
@@ -105,6 +110,7 @@
     "payload": {
       "schemaVersion": 1,
       "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "deploymentCommitSha": "dddddddddddddddddddddddddddddddddddddddd",
       "runId": 42,
       "runAttempt": 2,
       "emittedAt": "2026-08-11T20:00:00Z",
@@ -133,6 +139,7 @@
     "payload": {
       "schemaVersion": 1,
       "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "deploymentCommitSha": "dddddddddddddddddddddddddddddddddddddddd",
       "runId": 42,
       "runAttempt": 2,
       "emittedAt": "2026-08-11T20:00:00Z",
@@ -150,6 +157,7 @@
     "payload": {
       "schemaVersion": 1,
       "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "deploymentCommitSha": "dddddddddddddddddddddddddddddddddddddddd",
       "runId": 42,
       "runAttempt": 2,
       "emittedAt": "2026-08-11T20:00:00Z",
@@ -178,6 +186,7 @@
     "payload": {
       "schemaVersion": 1,
       "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "deploymentCommitSha": "dddddddddddddddddddddddddddddddddddddddd",
       "runId": 42,
       "runAttempt": 2,
       "emittedAt": "2026-08-11T20:00:00Z",

@@ -2,7 +2,7 @@ name: Gala publishing action
 description: Runs Gala signing and reconciliation after workflow-owned validation, build, and deployment.
 inputs:
   operation:
-    description: build, or acknowledge-deployment. Acknowledgement is valid only with build-only mode.
+    description: build, acknowledge-deployment, or report-failure. Non-build operations require build-only mode.
     required: true
   mode:
     description: build-only or build-and-deploy.
@@ -44,8 +44,17 @@ inputs:
   deployed-commit-sha:
     description: Actually deployed source SHA; signed into reconciliation during acknowledgement.
     required: false
+  deployment-commit-sha:
+    description: Exact commit placed on the hosting branch, used to verify the matching Pages build.
+    required: false
   recorded-state-sha:
     description: Reconstruction SHA containing only managed publication state and manifest-bound ID additions.
+    required: false
+  failure-code:
+    description: Uppercase workflow failure code; report-failure only.
+    required: false
+  failure-message:
+    description: Human-readable workflow failure detail; report-failure only.
     required: false
   run-id:
     description: GitHub workflow run identifier.

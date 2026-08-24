@@ -83,16 +83,32 @@ test('reusable workflow exposes the closed public contract with one explicit sec
 });
 
 test('workflow uses the published bundle and keeps deployment out of the signing action', () => {
-  assert.equal((source.match(/uses: rathnasgala\/publish@v1/g) ?? []).length, 2);
+  assert.equal((source.match(/uses: rathnasgala\/publish@v1/g) ?? []).length, 3);
   assert.doesNotMatch(source, /uses: \.\//);
   assert.match(source, /Publish the guarded artifact to gh-pages/);
   assert.match(source, /rsync -a --delete --exclude=\/\.git "\$output\/" "\$deploy_root\/"/);
   assert.doesNotMatch(source, /--exclude=\.git\//);
   assert.match(source, /git -C "\$deploy_root" push --force origin HEAD:refs\/heads\/gh-pages/);
+  assert.match(source, /deployment-commit-sha=\$deploy_commit/);
   assert.match(source, /operation: acknowledge-deployment\n          mode: build-only/);
   assert.match(source, /ref: \$\{\{ inputs\.operation == 'acknowledge-deployment' && inputs\.recorded-state-sha/);
   assert.match(source, /deployed-commit-sha: \$\{\{ github\.sha \}\}/);
+  assert.match(source, /deployment-commit-sha: \$\{\{ steps\.deploy\.outputs\.deployment-commit-sha \}\}/);
   assert.match(source, /recorded-state-sha: \$\{\{ github\.sha \}\}/);
+});
+
+test('workflow reports every deployment or acknowledgement failure through the signed action', () => {
+  const report = source.slice(
+    source.indexOf('- name: Report a failed deployment lifecycle'),
+    source.indexOf('- name: Record successful action-owned deployment')
+  );
+  assert.match(report, /if: always\(\)/);
+  assert.match(report, /steps\.deploy\.outcome == 'failure'/);
+  assert.match(report, /steps\.acknowledge\.outcome == 'failure'/);
+  assert.match(report, /operation: report-failure/);
+  assert.match(report, /failure-code:/);
+  assert.match(report, /failure-message:/);
+  assert.doesNotMatch(report, /continue-on-error/);
 });
 
 test('state persistence is post-deployment, secret-blind, and preserves caller HEAD', () => {

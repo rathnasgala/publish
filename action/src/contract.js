@@ -8,7 +8,7 @@ export const ActionOutcome = Object.freeze({
   SKIPPED_STALE: 'SKIPPED_STALE'
 });
 
-const OPERATIONS = new Set(['build', 'acknowledge-deployment']);
+const OPERATIONS = new Set(['build', 'acknowledge-deployment', 'report-failure']);
 const MODES = new Set(['build-only', 'build-and-deploy']);
 const SHA = /^[0-9a-f]{40}$/;
 const ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
@@ -45,17 +45,26 @@ export function parseActionInputs({ getInput, env = process.env, root = process.
   if (operation === 'acknowledge-deployment' && mode !== 'build-only') {
     throw new TypeError('acknowledge-deployment requires mode build-only');
   }
+  if (operation === 'report-failure' && mode !== 'build-only') {
+    throw new TypeError('report-failure requires mode build-only');
+  }
 
   const deployedCommitSha = getInput('deployed-commit-sha').trim();
+  const deploymentCommitSha = getInput('deployment-commit-sha').trim();
   const recordedStateSha = getInput('recorded-state-sha').trim();
   if (operation === 'acknowledge-deployment') {
-    if (!SHA.test(deployedCommitSha) || !SHA.test(recordedStateSha)) {
+    if (!SHA.test(deployedCommitSha) || !SHA.test(deploymentCommitSha)
+        || !SHA.test(recordedStateSha)) {
       throw new TypeError(
-        'deployed-commit-sha and recorded-state-sha are required lowercase commit SHAs'
+        'deployed-commit-sha, deployment-commit-sha, and recorded-state-sha are required lowercase commit SHAs'
       );
     }
   } else if (deployedCommitSha !== '' || recordedStateSha !== '') {
     throw new TypeError('deployment SHAs are accepted only for acknowledge-deployment');
+  }
+  if (deploymentCommitSha !== ''
+      && (operation !== 'acknowledge-deployment' || !SHA.test(deploymentCommitSha))) {
+    throw new TypeError('deployment-commit-sha must be a lowercase commit SHA for acknowledgement');
   }
   const commitSha = operation === 'acknowledge-deployment' ? recordedStateSha : env.GITHUB_SHA;
   if (!SHA.test(commitSha ?? '')) throw new TypeError('GITHUB_SHA must be a lowercase commit SHA');
@@ -88,6 +97,18 @@ export function parseActionInputs({ getInput, env = process.env, root = process.
   if (keepaliveThresholdDays >= 60) {
     throw new TypeError('keepalive-threshold-days must remain below 60');
   }
+  const failureCode = getInput('failure-code').trim();
+  const failureMessage = getInput('failure-message').trim();
+  if (operation === 'report-failure') {
+    if (failureCode === '') throw new TypeError('failure-code is required for report-failure');
+    if (!/^[A-Z][A-Z0-9_]{2,63}$/.test(failureCode)) {
+      throw new TypeError('failure-code must be an uppercase machine code');
+    }
+    if (failureMessage === '') throw new TypeError('failure-message is required for report-failure');
+    if (failureMessage.length > 1024) throw new TypeError('failure-message must be at most 1024 characters');
+  } else if (failureCode !== '' || failureMessage !== '') {
+    throw new TypeError('failure fields are accepted only for report-failure');
+  }
 
   return Object.freeze({
     operation,
@@ -95,6 +116,7 @@ export function parseActionInputs({ getInput, env = process.env, root = process.
     root: path.resolve(root),
     commitSha,
     deployedCommitSha: deployedCommitSha || null,
+    deploymentCommitSha: deploymentCommitSha || null,
     recordedStateSha: recordedStateSha || null,
     siteId,
     siteSecret: required(getInput, 'site-secret'),
@@ -106,6 +128,8 @@ export function parseActionInputs({ getInput, env = process.env, root = process.
     floorGuardPages: integer(getInput('floor-guard-pages').trim() || '25', 'floor-guard-pages'),
     keepaliveThresholdDays,
     floorGuardOverrideCommitSha: floorGuardOverrideCommitSha || null,
+    failureCode: failureCode || null,
+    failureMessage: failureMessage || null,
     runId: integer(required(getInput, 'run-id'), 'run-id', { minimum: 1 }),
     runAttempt: integer(required(getInput, 'run-attempt'), 'run-attempt', { minimum: 1 })
   });

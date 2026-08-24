@@ -5,7 +5,8 @@ import { evaluateDeployFloor, floorOverrideReason } from './floor-guard.js';
 
 export const ActionOperation = Object.freeze({
   BUILD: 'build',
-  ACKNOWLEDGE_DEPLOYMENT: 'acknowledge-deployment'
+  ACKNOWLEDGE_DEPLOYMENT: 'acknowledge-deployment',
+  REPORT_FAILURE: 'report-failure'
 });
 
 export const BuildMode = Object.freeze({
@@ -40,20 +41,15 @@ async function reconcile(
         emittedAt: adapters.now().toISOString(),
         runStatus: 'SUCCESS',
         daysSinceLastCommit,
+        deploymentCommitSha: input.deploymentCommitSha,
         floorGuardOverride
       })
     });
   } catch (error) {
-    // Only a transport failure is worth deferring: the deployment is already live and the API
-    // can be told about it on a later run. Every other error is a defect in this action or a
-    // break in the envelope contract, and deferring those hid a total contract break behind a
-    // green build for every publication until someone opened the site and found a 404.
-    if (!(error instanceof ReconciliationTransportError)) throw error;
-    if (error.status === 409) return { stale: true };
-    adapters.warn(error.status === 413
-      ? 'RECONCILIATION_PAYLOAD_LIMIT_APPROACHING_OR_EXCEEDED'
-      : 'RECONCILIATION_DEFERRED', error);
-    return null;
+    if (error instanceof ReconciliationTransportError && error.status === 409) {
+      return { stale: true };
+    }
+    throw error;
   }
 }
 
@@ -77,6 +73,31 @@ export async function runAction(input, adapters) {
     floorGuardLostPages: 0
   };
   let engagementSnapshotHash = null;
+  if (operation === ActionOperation.REPORT_FAILURE) {
+    try {
+      await (adapters.sendBuildFailure ?? sendBuildFailure)({
+        apiBaseUrl: input.apiBaseUrl,
+        siteId: input.siteId,
+        siteSecret: input.siteSecret,
+        fetchImpl: adapters.fetch,
+        report: {
+          emittedAt: adapters.now().toISOString(),
+          runId: input.runId,
+          runAttempt: input.runAttempt,
+          commitSha: input.commitSha,
+          validatorVersion: CONTENT_VALIDATION_VERSION,
+          errors: [{
+            source: 'workflow',
+            code: input.failureCode,
+            message: input.failureMessage
+          }]
+        }
+      });
+      return report;
+    } finally {
+      await adapters.report(report);
+    }
+  }
   try {
     const head = await adapters.currentCommitSha(input.root);
     if (head !== input.commitSha) {

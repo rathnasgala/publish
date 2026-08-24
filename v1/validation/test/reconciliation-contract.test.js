@@ -44,6 +44,14 @@ test('matches every shared reconciliation conformance fixture', () => {
   }
 });
 
+test('requires the exact hosting-branch commit in every reconciliation envelope', () => {
+  const payload = structuredClone(fixtures.find((fixture) => fixture.valid).payload);
+  delete payload.deploymentCommitSha;
+  const result = validateReconciliationEnvelope(payload);
+  assert.equal(result.valid, false);
+  assert.deepEqual(result.errorIds, ['RECONCILIATION_SCHEMA_REQUIRED']);
+});
+
 test('matches every shared language-tag conformance fixture', async () => {
   const { canonicalizeLanguageTag } = await import('../src/index.js');
   for (const fixture of languageFixtures) {

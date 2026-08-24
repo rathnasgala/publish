@@ -208,7 +208,9 @@ jobs:
           git -C "$deploy_root" config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git -C "$deploy_root" add --all
           git -C "$deploy_root" commit -m "deploy(gala): $GALA_DEPLOYED_COMMIT_SHA"
+          deploy_commit="$(git -C "$deploy_root" rev-parse HEAD)"
           git -C "$deploy_root" push --force origin HEAD:refs/heads/gh-pages
+          echo "deployment-commit-sha=$deploy_commit" >> "$GITHUB_OUTPUT"
 
       - name: Reconcile the action-owned deployment
         id: acknowledge
@@ -228,7 +230,29 @@ jobs:
           keepalive-threshold-days: ${{ inputs.keepalive-threshold-days }}
           floor-guard-override-commit-sha: ''
           deployed-commit-sha: ${{ github.sha }}
+          deployment-commit-sha: ${{ steps.deploy.outputs.deployment-commit-sha }}
           recorded-state-sha: ${{ github.sha }}
+          run-id: ${{ github.run_id }}
+          run-attempt: ${{ github.run_attempt }}
+
+      - name: Report a failed deployment lifecycle
+        if: always() && inputs.operation == 'build' && inputs.mode == 'build-and-deploy' && steps.primary.outcome == 'success' && (steps.deploy.outcome == 'failure' || steps.acknowledge.outcome == 'failure')
+        uses: rathnasgala/publish@v1
+        with:
+          operation: report-failure
+          mode: build-only
+          site-id: ${{ inputs.site-id }}
+          site-secret: ${{ secrets.site-secret }}
+          api-base-url: ${{ inputs.api-base-url }}
+          output-directory: ${{ inputs.output-directory }}
+          timezone: ${{ inputs.timezone }}
+          config-path: ${{ inputs.config-path }}
+          floor-guard-percent: ${{ inputs.floor-guard-percent }}
+          floor-guard-pages: ${{ inputs.floor-guard-pages }}
+          keepalive-threshold-days: ${{ inputs.keepalive-threshold-days }}
+          floor-guard-override-commit-sha: ''
+          failure-code: ${{ steps.deploy.outcome == 'failure' && 'DEPLOYMENT_FAILED' || 'RECONCILIATION_FAILED' }}
+          failure-message: ${{ steps.deploy.outcome == 'failure' && 'The publication artifact could not be pushed to the hosting branch.' || 'The deployed publication could not be reconciled with Gala.' }}
           run-id: ${{ github.run_id }}
           run-attempt: ${{ github.run_attempt }}
 
@@ -399,8 +423,10 @@ jobs:
           if [ "$GALA_PRIMARY_STEP" != 'success' ]; then
             outcome='FAILED'
           elif [ "$GALA_OPERATION" = 'build' ] && [ "$GALA_MODE" = 'build-and-deploy' ]; then
-            if [ "$GALA_DEPLOY_STEP" != 'success' ] || [ "$GALA_ACK_STEP" != 'success' ] || [ "$GALA_PERSIST_STEP" != 'success' ]; then
+            if [ "$GALA_DEPLOY_STEP" != 'success' ] || [ "$GALA_ACK_STEP" != 'success' ]; then
               outcome='FAILED'
+            elif [ "$GALA_PERSIST_STEP" != 'success' ]; then
+              outcome='PARTIAL'
             else
               outcome="$GALA_ACK_OUTCOME"
             fi

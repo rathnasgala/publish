@@ -33,10 +33,14 @@ export function createReconciliationEnvelope({
   emittedAt,
   runStatus,
   daysSinceLastCommit,
+  deploymentCommitSha,
   floorGuardOverride = null
 }) {
   if (manifest == null || manifest.schemaVersion !== 1 || !Array.isArray(manifest.posts)) {
     throw new TypeError('Current validated build manifest is required');
+  }
+  if (typeof deploymentCommitSha !== 'string' || !/^[0-9a-f]{40}$/.test(deploymentCommitSha)) {
+    throw new TypeError('deploymentCommitSha must be a lowercase commit SHA');
   }
   const grouped = new Map();
   for (const post of manifest.posts) {
@@ -61,6 +65,7 @@ export function createReconciliationEnvelope({
     emittedAt,
     runStatus,
     daysSinceLastCommit,
+    deploymentCommitSha,
     themePackage: manifest.themePackage,
     statistics: manifest.statistics ?? { publicViewCounts: false },
     contact: manifest.contact ?? { enabled: false, websiteEnabled: false, phoneEnabled: false },
