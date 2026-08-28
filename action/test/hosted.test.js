@@ -57,6 +57,9 @@ const { mkdirSync, writeFileSync } = require('node:fs');
 const output = process.argv.find((value) => value.startsWith('--output=')).slice(9);
 mkdirSync(output, { recursive: true });
 writeFileSync(require('node:path').join(output, 'index.html'), '<!doctype html>');
+writeFileSync(require('node:path').join(output, 'build-environment.json'), JSON.stringify({
+  commit: process.env.GALA_BUILD_COMMIT
+}));
 `);
   await writeFile(path.join(root, 'lib', 'prism-compiled-output.js'),
     'export async function verifyPrismCompiledOutput() {}\n');
@@ -91,6 +94,10 @@ test('hosted validation uses the selected config, emits only the manifest, and c
   assert.equal(result.manifest.posts.length, 1);
   assert.equal(result.currentPageCount, 1);
   assert.match(await readFile(path.join(root, '_site', 'index.html'), 'utf8'), /doctype/);
+  assert.deepEqual(
+    JSON.parse(await readFile(path.join(root, '_site', 'build-environment.json'), 'utf8')),
+    { commit: SHA }
+  );
   assert.equal(verified.root, root);
   assert.equal(verified.outputDirectory, path.join(root, '_site'));
   assert.equal(verified.manifest, result.manifest);

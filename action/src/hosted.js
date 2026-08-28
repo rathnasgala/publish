@@ -258,6 +258,7 @@ export function createHostedAdapters({
           GALA_CONFIG_PATH: input.configPath,
           GALA_EVALUATION_DATE: generated.manifest.evaluationDate,
           GALA_BUILD_INSTANT: now().toISOString(),
+          GALA_BUILD_COMMIT: input.commitSha,
           GALA_ATTRIBUTION_TIER: resolvedAttributionTier
         }
       });
