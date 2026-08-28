@@ -1,0 +1,45 @@
+{
+  "contract": "GALA_PRISM_LITERAL_RISK_V1",
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "name": "preserved-literals",
+      "canonicalBody": "# Report\n\n> “Revenue was $1.2M on 2026-08-25 at 09:30 UTC.”\n\nSee [source](https://example.com/report).\n",
+      "configurationBody": "# Report\n\n> “Revenue was $1.2M on 2026-08-25 at 09:30 UTC.”\n\nSee [source](https://example.com/report).\n",
+      "protectionContract": {},
+      "expected": []
+    },
+    {
+      "name": "protected-content-omissions",
+      "canonicalBody": "# Report\n\n> “Revenue was $1.2M on 2026-08-25 at 09:30 UTC.”\n\nSee [source](https://example.com/report).\n\n<!-- prism-keep:limit -->\nThis estimate excludes taxes.\n<!-- /prism-keep:limit -->\n\nAcme Corp may revise this result.\n",
+      "configurationBody": "# Brief\n\nRevenue improved.\n\nSee the source later.\n",
+      "protectionContract": {
+        "schemaVersion": 1,
+        "caveats": ["This estimate excludes taxes."],
+        "names": ["Acme Corp"],
+        "attributions": ["See [source](https://example.com/report)."]
+      },
+      "expected": [
+        {"id":"literal.omitted:quotation:1","kind":"QUOTATION","severity":"WARNING","sourceText":"> “Revenue was $1.2M on 2026-08-25 at 09:30 UTC.”\n","configurationText":null},
+        {"id":"literal.omitted:unit:1","kind":"UNIT","severity":"WARNING","sourceText":"$1.2M","configurationText":null},
+        {"id":"literal.omitted:date:1","kind":"DATE","severity":"WARNING","sourceText":"2026-08-25","configurationText":null},
+        {"id":"literal.omitted:time:1","kind":"TIME","severity":"WARNING","sourceText":"09:30 UTC","configurationText":null},
+        {"id":"literal.omitted:declared-attribution:1","kind":"ATTRIBUTION","severity":"WARNING","sourceText":"See [source](https://example.com/report).","configurationText":null},
+        {"id":"literal.omitted:keep-block:1","kind":"KEEP_BLOCK","severity":"BLOCKER","sourceText":"<!-- prism-keep:limit -->\nThis estimate excludes taxes.\n<!-- /prism-keep:limit -->","configurationText":null},
+        {"id":"literal.omitted:declared-caveat:1","kind":"DECLARED_CAVEAT","severity":"BLOCKER","sourceText":"This estimate excludes taxes.","configurationText":null},
+        {"id":"literal.omitted:name:1","kind":"NAME","severity":"WARNING","sourceText":"Acme Corp","configurationText":null}
+      ]
+    },
+    {
+      "name": "forbidden-configuration-content",
+      "canonicalBody": "# Canonical\n",
+      "configurationBody": "# Brief\n\n<script>alert(1)</script>\n[Read more](https://evil.example/path)\nimport thing from 'pkg'\n",
+      "protectionContract": {},
+      "expected": [
+        {"id":"literal.forbidden:raw-html:1","kind":"RAW_HTML","severity":"BLOCKER","sourceText":null,"configurationText":"<script>alert(1)</script>"},
+        {"id":"literal.new:outbound-link:1","kind":"OUTBOUND_LINK","severity":"BLOCKER","sourceText":null,"configurationText":"[Read more](https://evil.example/path)"},
+        {"id":"literal.forbidden:unsupported-markdown:1","kind":"UNSUPPORTED_MARKDOWN","severity":"BLOCKER","sourceText":null,"configurationText":"import t"}
+      ]
+    }
+  ]
+}

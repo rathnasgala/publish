@@ -4,6 +4,7 @@ import path from 'node:path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { ulid } from 'ulid';
 import MarkdownIt from 'markdown-it';
+import { readPrismRepository, normalizePrismSettings } from './prism-validation.js';
 
 export {
   compileContractSchema,
@@ -11,6 +12,8 @@ export {
   reconciliationFormatNames,
   validateReconciliationEnvelope
 } from './reconciliation-contract.js';
+
+export { PRISM_LITERAL_RISK_V1, analyzePrismLiteralRisk } from './prism-literal-risk.js';
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -338,6 +341,41 @@ export function validatePublicationState(value) {
       && (typeof deployedCommitSha !== 'string' || !/^[0-9a-f]{40}$/.test(deployedCommitSha))) {
     throw new TypeError('publication state deployedCommitSha must be a lowercase commit SHA');
   }
+  const hasConfigurations = Object.hasOwn(value, 'configurations');
+  const configurations = value.configurations == null ? [] : value.configurations;
+  if (!Array.isArray(configurations)) {
+    throw new TypeError('publication state configurations must be a list');
+  }
+  const seenConfigurations = new Set();
+  const validatedConfigurations = configurations.map((configuration, index) => {
+    if (configuration == null || Array.isArray(configuration) || typeof configuration !== 'object') {
+      throw new TypeError(`publication state configurations[${index}] must be a mapping`);
+    }
+    for (const field of ['configurationId', 'articleId', 'revisionId', 'approvalId']) {
+      if (!isContentId(configuration[field])) {
+        throw new TypeError(`publication state configurations[${index}].${field} must be a ULID`);
+      }
+    }
+    if (seenConfigurations.has(configuration.configurationId)) {
+      throw new TypeError(`publication state configurations[${index}].configurationId must be unique`);
+    }
+    seenConfigurations.add(configuration.configurationId);
+    if (!isLanguageTag(configuration.language)
+        || !['SIGNAL', 'BRIEF', 'STANDARD', 'COMPLETE', 'METHODS_REFERENCES'].includes(configuration.depth)
+        || !['ORIENTATION', 'STORY', 'PROOF', 'PRACTICE'].includes(configuration.intent)
+        || configuration.modality !== 'TEXT'
+        || !['PUBLISHED', 'STALE', 'DISABLED', 'REVOKED'].includes(configuration.state)
+        || !['NOFOLLOW', 'FOLLOW'].includes(configuration.configurationLinkPolicy)
+        || configuration.approvalTokenVersion !== 1
+        || !['CURRENT', 'PREVIOUS'].includes(configuration.approvalTokenVerifiedWith)
+        || typeof configuration.relativeUrl !== 'string' || !configuration.relativeUrl.startsWith('/')
+        || !/^[0-9a-f]{64}$/.test(configuration.sourceRevisionHash)
+        || !/^[0-9a-f]{64}$/.test(configuration.configurationContentHash)
+        || configuration.hashContract !== 'GALA_PRISM_HASH_V1') {
+      throw new TypeError(`publication state configurations[${index}] is invalid`);
+    }
+    return Object.freeze({ ...configuration, language: canonicalizeLanguageTag(configuration.language) });
+  });
   return Object.freeze({
     schemaVersion: 1,
     ...(deployedCommitSha == null ? {} : { deployedCommitSha }),
@@ -376,7 +414,9 @@ export function validatePublicationState(value) {
         slug: post.slug,
         languages: Object.freeze(Object.fromEntries(languages))
       });
-    }))
+    })),
+    ...(hasConfigurations ? { configurations: Object.freeze(validatedConfigurations.sort((left, right) =>
+      left.configurationId.localeCompare(right.configurationId))) } : {})
   });
 }
 
@@ -646,7 +686,7 @@ export async function markdownPostFiles(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
   const nested = await Promise.all(entries.map(async (entry) => {
     const entryPath = path.join(directory, entry.name);
-    if (entry.isDirectory()) return markdownPostFiles(entryPath);
+    if (entry.isDirectory()) return entry.name === 'prism' ? [] : markdownPostFiles(entryPath);
     return entry.isFile() && /^index\.[^.]+\.md$/.test(entry.name) ? [entryPath] : [];
   }));
   return nested.flat();
@@ -718,7 +758,7 @@ function requireCalendarDate(value, field) {
 }
 
 export function derivePublicationState({ current, manifest, deployedOn, deployedCommitSha }) {
-  if (manifest == null || manifest.schemaVersion !== 1 || !Array.isArray(manifest.posts)) {
+  if (manifest == null || ![1, 2].includes(manifest.schemaVersion) || !Array.isArray(manifest.posts)) {
     throw new TypeError('A current validated build manifest is required');
   }
   requireCalendarDate(deployedOn, 'deployedOn');
@@ -751,7 +791,27 @@ export function derivePublicationState({ current, manifest, deployedOn, deployed
   return validatePublicationState({
     schemaVersion: 1,
     deployedCommitSha,
-    posts: [...byId.values()].sort((left, right) => left.id.localeCompare(right.id))
+    posts: [...byId.values()].sort((left, right) => left.id.localeCompare(right.id)),
+    configurations: manifest.schemaVersion === 2
+      ? (manifest.configurations ?? []).map((configuration) => ({
+          configurationId: configuration.configurationId,
+          articleId: configuration.articleId,
+          language: configuration.language,
+          revisionId: configuration.revisionId,
+          approvalId: configuration.approvalId,
+          approvalTokenVersion: configuration.approvalTokenVersion,
+          approvalTokenVerifiedWith: configuration.approvalTokenVerifiedWith,
+          sourceRevisionHash: configuration.sourceRevisionHash,
+          configurationContentHash: configuration.configurationContentHash,
+          hashContract: configuration.hashContract,
+          depth: configuration.depth,
+          intent: configuration.intent,
+          modality: configuration.modality,
+          state: configuration.state,
+          relativeUrl: configuration.relativeUrl,
+          configurationLinkPolicy: configuration.configurationLinkPolicy
+        }))
+      : validatedCurrent.configurations ?? []
   });
 }
 
@@ -992,7 +1052,10 @@ export async function regenerateBuildManifest({
   now,
   idFactory,
   configPath = 'site.config.yml',
-  timezone
+  timezone,
+  siteId = null,
+  currentSiteSecret = null,
+  previousSiteSecret = null
 }) {
   const siteRoot = path.resolve(root);
   const realSiteRoot = await realpath(siteRoot);
@@ -1100,15 +1163,71 @@ export async function regenerateBuildManifest({
     });
   }
   redirects.sort((left, right) => left.relativeUrl.localeCompare(right.relativeUrl));
+  const knownArticleIds = new Set([
+    ...results.map((result) => result.data?.id).filter(Boolean),
+    ...publicationState.posts.map((post) => post.id)
+  ]);
+  const prism = normalizePrismSettings(siteConfig.prism, knownArticleIds);
+  let configurations;
+  if (prism != null) {
+    if (!ULID_PATTERN.test(siteId ?? '')) throw new TypeError('siteId is required for Prism manifest V2');
+    for (const post of posts) {
+      post.prismMode = prism.mode === 'OFF' ? 'OFF' : (prism.articleModes[post.id] ?? prism.mode);
+      post.prismConfigurationLinkPolicy = prism.articleConfigurationLinkPolicies[post.id]
+        ?? prism.configurationLinkPolicy;
+    }
+    configurations = await readPrismRepository({
+      root: siteRoot,
+      siteId,
+      canonicalPosts: posts.filter((post) => post.publicationState === PublicationState.PUBLISHED),
+      currentSiteSecret: currentSiteSecret ?? Buffer.alloc(0),
+      previousSiteSecret
+    });
+    configurations = configurations.map((configuration) => {
+      const parent = posts.find((post) => post.source === configuration.parentSource);
+      if (parent == null) throw new TypeError(`Prism parent is not emitted: ${configuration.configurationId}`);
+      const enabled = ['MANUAL', 'ASSISTED'].includes(parent.prismMode);
+      const relativeUrl = `${parent.relativeUrl}prism/${configuration.configurationId}/`;
+      return {
+        ...configuration,
+        state: enabled ? configuration.state : 'DISABLED',
+        ...(enabled && configuration.state === 'PUBLISHED'
+          ? { body: configuration.markdown }
+          : {}),
+        markdown: undefined,
+        relativeUrl,
+        pageUrl: new URL(`prism/${configuration.configurationId}/`, parent.pageUrl).href,
+        canonicalUrl: parent.canonicalUrl,
+        configurationLinkPolicy: parent.prismConfigurationLinkPolicy
+      };
+    });
+    const currentIds = new Set(configurations.map(({ configurationId }) => configurationId));
+    for (const previous of publicationState.configurations ?? []) {
+      if (currentIds.has(previous.configurationId)) continue;
+      const parent = posts.find((post) => post.id === previous.articleId
+        && post.language === previous.language);
+      if (parent == null || parent.publicationState !== PublicationState.PUBLISHED) continue;
+      configurations.push({
+        ...previous,
+        state: 'REVOKED',
+        pageUrl: new URL(`prism/${previous.configurationId}/`, parent.pageUrl).href,
+        canonicalUrl: parent.canonicalUrl,
+        relativeUrl: `${parent.relativeUrl}prism/${previous.configurationId}/`,
+        configurationLinkPolicy: parent.prismConfigurationLinkPolicy
+      });
+    }
+    configurations.sort((left, right) => left.configurationId.localeCompare(right.configurationId));
+  }
   const manifest = {
-    schemaVersion: 1,
+    schemaVersion: prism == null ? 1 : 2,
     evaluationDate,
     themePackage: { ...siteConfig.framework.themePackage },
     statistics,
     contact,
     assignedContentIds,
     posts,
-    redirects
+    redirects,
+    ...(prism == null ? {} : { prism, configurations })
   };
   await mkdir(path.dirname(manifestPath), { recursive: true });
   const temporary = `${manifestPath}.tmp-${process.pid}`;

@@ -117,6 +117,48 @@ test('groups variants while metadata remains independent from the body hash', ()
   });
 });
 
+test('emits the complete V2 Prism reconciliation projection', () => {
+  const configurationId = '01K00000000000000000000011';
+  const revisionId = '01K00000000000000000000012';
+  const approvalId = '01K00000000000000000000013';
+  const build = manifest({
+    prismSourceHash: 'b'.repeat(64),
+    prismHashContract: 'GALA_PRISM_HASH_V1',
+    prismProtectionContract: { schemaVersion: 1, names: ['42'] },
+    prismReferencedMediaDigests: { 'image.png': 'c'.repeat(64) },
+  });
+  build.schemaVersion = 2;
+  build.prism = {
+    schemaVersion: 1, mode: 'MANUAL', configurationLinkPolicy: 'NOFOLLOW',
+    articleModes: {}, articleConfigurationLinkPolicies: {},
+  };
+  build.configurations = [{
+    configurationId, revisionId, approvalId, articleId: ARTICLE, language: 'en',
+    approvalTokenVersion: 1, approvalTokenVerifiedWith: 'CURRENT',
+    hashContract: 'GALA_PRISM_HASH_V1', state: 'PUBLISHED',
+    sourceRevisionHash: 'b'.repeat(64), configurationContentHash: 'd'.repeat(64),
+    depth: 'BRIEF', intent: 'ORIENTATION', modality: 'TEXT',
+    configurationLinkPolicy: 'NOFOLLOW',
+    pageUrl: `https://example.com/en/post/prism/${configurationId}/`,
+  }];
+
+  const result = envelope(build);
+
+  assert.equal(result.schemaVersion, 2);
+  assert.deepEqual(result.prism, {
+    mode: 'MANUAL', configurationLinkPolicy: 'NOFOLLOW',
+    articleModes: {}, articleConfigurationLinkPolicies: {},
+  });
+  assert.deepEqual(result.articles[0].variants[0].configurations[0], {
+    id: configurationId, revisionId, approvalId, approvalTokenVersion: 1,
+    approvalTokenVerifiedWith: 'CURRENT', hashContract: 'GALA_PRISM_HASH_V1',
+    state: 'PUBLISHED', sourceRevisionHash: 'b'.repeat(64), contentHash: 'd'.repeat(64),
+    depth: 'BRIEF', intent: 'ORIENTATION', modality: 'TEXT',
+    configurationLinkPolicy: 'NOFOLLOW',
+    pageUrl: `https://example.com/en/post/prism/${configurationId}/`,
+  });
+});
+
 test('carries the validator-resolved public view-count setting in every full snapshot', () => {
   assert.deepEqual(envelope().statistics, { publicViewCounts: false });
   const legacy = manifest();
@@ -587,6 +629,7 @@ test('runs locally against a fixture repository without GitHub context', async (
   const root = await mkdtemp(path.join(tmpdir(), 'gala-action-'));
   await mkdir(path.join(root, 'content', 'posts', 'post'), { recursive: true });
   await mkdir(path.join(root, '.gala'), { recursive: true });
+  await mkdir(path.join(root, 'lib'), { recursive: true });
   await mkdir(path.join(root, 'node_modules', '@11ty', 'eleventy'), { recursive: true });
   await writeFile(path.join(root, 'content', 'posts', 'post', 'index.en.md'), `---
 id: ${ARTICLE}
@@ -629,6 +672,8 @@ const output = process.argv.find((value) => value.startsWith('--output=')).slice
 mkdirSync(output, { recursive: true });
 writeFileSync(require('node:path').join(output, 'index.html'), '<!doctype html>');
 `);
+  await writeFile(path.join(root, 'lib', 'prism-compiled-output.js'),
+    'export async function verifyPrismCompiledOutput() {}\n');
   const result = await runLocalFixture({
     root,
     input: input({ configPath: 'site.config.yml', timezone: 'UTC', outputDirectory: '_site' }),

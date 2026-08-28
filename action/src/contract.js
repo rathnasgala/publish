@@ -120,6 +120,7 @@ export function parseActionInputs({ getInput, env = process.env, root = process.
     recordedStateSha: recordedStateSha || null,
     siteId,
     siteSecret: required(getInput, 'site-secret'),
+    previousSiteSecret: getInput('previous-site-secret').trim() || null,
     apiBaseUrl: required(getInput, 'api-base-url'),
     outputDirectory,
     timezone: timezone(required(getInput, 'timezone')),

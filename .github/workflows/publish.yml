@@ -67,6 +67,9 @@ on:
       site-secret:
         description: Per-site reconciliation HMAC secret.
         required: true
+      previous-site-secret:
+        description: Previous HMAC secret during a bounded rotation grace window.
+        required: false
     outputs:
       outcome:
         value: ${{ jobs.publish.outputs.outcome }}
@@ -133,6 +136,7 @@ jobs:
           mode: ${{ inputs.mode }}
           site-id: ${{ inputs.site-id }}
           site-secret: ${{ secrets.site-secret }}
+          previous-site-secret: ${{ secrets.previous-site-secret }}
           api-base-url: ${{ inputs.api-base-url }}
           output-directory: ${{ inputs.output-directory }}
           timezone: ${{ inputs.timezone }}
@@ -222,6 +226,7 @@ jobs:
           mode: build-only
           site-id: ${{ inputs.site-id }}
           site-secret: ${{ secrets.site-secret }}
+          previous-site-secret: ${{ secrets.previous-site-secret }}
           api-base-url: ${{ inputs.api-base-url }}
           output-directory: ${{ inputs.output-directory }}
           timezone: ${{ inputs.timezone }}
@@ -244,6 +249,7 @@ jobs:
           mode: build-only
           site-id: ${{ inputs.site-id }}
           site-secret: ${{ secrets.site-secret }}
+          previous-site-secret: ${{ secrets.previous-site-secret }}
           api-base-url: ${{ inputs.api-base-url }}
           output-directory: ${{ inputs.output-directory }}
           timezone: ${{ inputs.timezone }}

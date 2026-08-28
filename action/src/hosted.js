@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { readEngagementSnapshot } from './transport.js';
 import { attributionTier } from './attribution.js';
 
@@ -16,12 +17,13 @@ import {
 /**
  * Whether two publication states describe the same publication, ignoring the deployed stamp.
  *
- * Only the posts carry meaning here; `deployedCommitSha` is a record of which commit produced
- * them, so it cannot be evidence that they changed.
+ * Posts and retained Prism configuration descriptors carry publication meaning here;
+ * `deployedCommitSha` only records which commit produced them.
  */
 function samePublications(current, next) {
   if (current == null || typeof current.deployedCommitSha !== 'string') return false;
-  return JSON.stringify(current.posts ?? []) === JSON.stringify(next.posts ?? []);
+  return JSON.stringify(current.posts ?? []) === JSON.stringify(next.posts ?? [])
+    && JSON.stringify(current.configurations ?? []) === JSON.stringify(next.configurations ?? []);
 }
 
 const STAGE_PATH = path.join('.gala', 'build', 'deployment-stage.json');
@@ -122,12 +124,26 @@ async function atomicJson(file, value) {
   }
 }
 
+async function verifyManagedPrismCompiledOutput({ root, outputDirectory, manifest }) {
+  const verifier = path.join(root, 'lib', 'prism-compiled-output.js');
+  const metadata = await lstat(verifier);
+  if (!metadata.isFile() || metadata.isSymbolicLink()) {
+    throw new TypeError('Prism compiled-output verifier must be a regular managed file');
+  }
+  const module = await import(pathToFileURL(verifier).href);
+  if (typeof module.verifyPrismCompiledOutput !== 'function') {
+    throw new TypeError('Managed Prism compiled-output verifier has no verifier export');
+  }
+  await module.verifyPrismCompiledOutput({ outputDirectory, manifest });
+}
+
 export function createHostedAdapters({
   env = process.env,
   now = () => new Date(),
   runCommand = run,
   summary = core.summary,
-  fetchImpl = fetch
+  fetchImpl = fetch,
+  verifyCompiledOutput = verifyManagedPrismCompiledOutput
 } = {}) {
   return {
     fetch: fetchImpl,
@@ -213,7 +229,10 @@ export function createHostedAdapters({
         root: input.root,
         configPath: input.configPath,
         timezone: input.timezone,
-        now: () => now().getTime()
+        now: () => now().getTime(),
+        siteId: input.siteId,
+        currentSiteSecret: input.siteSecret,
+        previousSiteSecret: input.previousSiteSecret
       });
       for (const result of generated.results) {
         for (const warning of result.warnings) core.warning(`${result.file}: ${warning}`);
@@ -239,6 +258,11 @@ export function createHostedAdapters({
           GALA_BUILD_INSTANT: now().toISOString(),
           GALA_ATTRIBUTION_TIER: resolvedAttributionTier
         }
+      });
+      await verifyCompiledOutput({
+        root: input.root,
+        outputDirectory: output,
+        manifest: generated.manifest
       });
       const deploymentStage = input.operation === 'acknowledge-deployment'
         ? await readStage(input.root, input.commitSha)

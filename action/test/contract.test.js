@@ -12,6 +12,7 @@ function values(overrides = {}) {
     mode: 'build-only',
     'site-id': SITE,
     'site-secret': '0123456789abcdef0123456789abcdef',
+    'previous-site-secret': '',
     'api-base-url': 'https://api.example.com',
     'output-directory': '_site',
     timezone: 'America/Los_Angeles',
@@ -43,6 +44,9 @@ test('accepts both build modes and applies the checkout-safe config default', ()
   assert.equal(parse().timezone, 'America/Los_Angeles');
   assert.equal(parse().floorGuardPercent, 20);
   assert.equal(parse().floorGuardPages, 25);
+  assert.equal(parse().previousSiteSecret, null);
+  assert.equal(parse({ 'previous-site-secret': 'fedcba9876543210fedcba9876543210' })
+    .previousSiteSecret, 'fedcba9876543210fedcba9876543210');
   assert.equal(parse().keepaliveThresholdDays, 50);
 });
 

@@ -5,7 +5,7 @@ import { markdownBodyHash } from './content-hash.js';
 const STATE = Object.freeze({ published: 'PUBLISHED', tombstoned: 'TOMBSTONED' });
 export const CONTENT_VALIDATION_VERSION = validatorPackage.version;
 
-function normalizedVariant(post) {
+function normalizedVariant(post, configurations = []) {
   const raw = post.rawFrontmatter;
   if (raw == null || Array.isArray(raw) || typeof raw !== 'object') {
     throw new TypeError(`Validated post ${post.source} is missing rawFrontmatter`);
@@ -21,7 +21,32 @@ function normalizedVariant(post) {
     tags: post.frontmatter?.tags ?? [],
     coverImage: post.frontmatter?.coverImage ?? null,
     canonicalUrl: post.canonicalUrl,
-    frontmatter: raw
+    frontmatter: raw,
+    ...(post.prismSourceHash == null ? {} : {
+      prismSourceHash: post.prismSourceHash,
+      prismHashContract: post.prismHashContract,
+      prismProtectionContract: post.prismProtectionContract ?? {},
+      prismReferencedMediaDigests: post.prismReferencedMediaDigests ?? {},
+      configurations: configurations
+        .filter((configuration) => configuration.articleId === post.id
+          && configuration.language === post.language)
+        .map((configuration) => ({
+          id: configuration.configurationId,
+          revisionId: configuration.revisionId,
+          approvalId: configuration.approvalId,
+          approvalTokenVersion: configuration.approvalTokenVersion,
+          approvalTokenVerifiedWith: configuration.approvalTokenVerifiedWith,
+          hashContract: configuration.hashContract,
+          state: configuration.state,
+          sourceRevisionHash: configuration.sourceRevisionHash,
+          contentHash: configuration.configurationContentHash,
+          depth: configuration.depth,
+          intent: configuration.intent,
+          modality: configuration.modality,
+          configurationLinkPolicy: configuration.configurationLinkPolicy,
+          pageUrl: configuration.pageUrl,
+        })),
+    }),
   };
 }
 
@@ -36,7 +61,8 @@ export function createReconciliationEnvelope({
   deploymentCommitSha,
   floorGuardOverride = null
 }) {
-  if (manifest == null || manifest.schemaVersion !== 1 || !Array.isArray(manifest.posts)) {
+  if (manifest == null || ![1, 2].includes(manifest.schemaVersion)
+      || !Array.isArray(manifest.posts)) {
     throw new TypeError('Current validated build manifest is required');
   }
   if (typeof deploymentCommitSha !== 'string' || !/^[0-9a-f]{40}$/.test(deploymentCommitSha)) {
@@ -48,7 +74,7 @@ export function createReconciliationEnvelope({
     if (article.slug !== post.slug) {
       throw new TypeError(`Validated variants disagree on slug for ${post.id}`);
     }
-    article.variants.push(normalizedVariant(post));
+    article.variants.push(normalizedVariant(post, manifest.configurations));
     grouped.set(post.id, article);
   }
   const articles = [...grouped.values()]
@@ -58,7 +84,7 @@ export function createReconciliationEnvelope({
     }))
     .sort((left, right) => left.id.localeCompare(right.id));
   const envelope = {
-    schemaVersion: 1,
+    schemaVersion: manifest.schemaVersion,
     commitSha,
     runId,
     runAttempt,
@@ -70,6 +96,12 @@ export function createReconciliationEnvelope({
     statistics: manifest.statistics ?? { publicViewCounts: false },
     contact: manifest.contact ?? { enabled: false, websiteEnabled: false, phoneEnabled: false },
     ...(floorGuardOverride == null ? {} : { floorGuardOverride }),
+    ...(manifest.schemaVersion === 2 ? { prism: {
+      mode: manifest.prism.mode,
+      configurationLinkPolicy: manifest.prism.configurationLinkPolicy,
+      articleModes: manifest.prism.articleModes,
+      articleConfigurationLinkPolicies: manifest.prism.articleConfigurationLinkPolicies,
+    } } : {}),
     articles
   };
   const validation = validateReconciliationEnvelope(envelope);

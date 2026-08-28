@@ -1,0 +1,38 @@
+{
+  "contract": "GALA_PRISM_HASH_V1",
+  "schemaVersion": 1,
+  "markdownCases": [
+    {"name":"plain","inputBase64":"Q2Fmw6kKc2Vjb25kCnRoaXJk","normalizedBase64":"Q2Fmw6kKc2Vjb25kCnRoaXJk","digest":"600dca662278a26b49ddd409f4c2423547b11fbadf42e1a733c07eccb6c4e4bf"},
+    {"name":"bom-nfd-crlf","inputBase64":"77u/Q2FmZcyBDQpzZWNvbmQNdGhpcmQ=","normalizedBase64":"Q2Fmw6kKc2Vjb25kCnRoaXJk","digest":"600dca662278a26b49ddd409f4c2423547b11fbadf42e1a733c07eccb6c4e4bf"},
+    {"name":"trailing-newline","inputBase64":"Ym9keQo=","normalizedBase64":"Ym9keQo=","digest":"9e2ec912af5dff2a72300863864fc4da04e81999339d9fac5c7590ba8a3f4e11"},
+    {"name":"embedded-bom","inputBase64":"Ym/vu79keQ==","normalizedBase64":"Ym/vu79keQ==","digest":"4f7f9aa7cee26e92e7b997114ef86786a2d7ecc1a8dd9488222bc2ee474c3696"},
+    {"name":"astral","inputBase64":"QfCfmIDDqQ==","normalizedBase64":"QfCfmIDDqQ==","digest":"17ff00477d1bd497bfd8f730aa1eed978adee5c8c1c72701988ee6faff6023e4"}
+  ],
+  "canonicalJsonCases": [
+    {"name":"nested","input":"{\"z\":{\"é\":1,\"a\":[true,null,\"Cafe\\u0301\"]},\"a\":2}","canonical":"{\"a\":2,\"z\":{\"a\":[true,null,\"Café\"],\"é\":1}}"},
+    {"name":"numbers","input":"{\"small\":1e-7,\"plain\":0.000001,\"large\":1e21,\"negativeZero\":-0}","canonical":"{\"large\":1e+21,\"negativeZero\":0,\"plain\":0.000001,\"small\":1e-7}"}
+  ],
+  "approvalCase": {
+    "facts": {
+      "siteId":"01K00000000000000000000010",
+      "approvalId":"01K00000000000000000000011",
+      "configurationId":"01K00000000000000000000012",
+      "revisionId":"01K00000000000000000000013",
+      "articleId":"01K00000000000000000000014",
+      "language":"en",
+      "sourceRevisionHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "configurationContentHash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "depth":"BRIEF",
+      "intent":"ORIENTATION",
+      "modality":"TEXT",
+      "approvedAt":"2026-08-26T16:00:00.000Z",
+      "authorityType":"AUTHOR_OWNER",
+      "hashContract":"GALA_PRISM_HASH_V1",
+      "approvalTokenVersion":1
+    },
+    "keyBase64":"MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+    "payloadBase64":"Z2FsYS1wcmlzbS1hcHByb3ZhbC12MQoyNjowMUswMDAwMDAwMDAwMDAwMDAwMDAwMDAxMAoyNjowMUswMDAwMDAwMDAwMDAwMDAwMDAwMDAxMQoyNjowMUswMDAwMDAwMDAwMDAwMDAwMDAwMDAxMgoyNjowMUswMDAwMDAwMDAwMDAwMDAwMDAwMDAxMwoyNjowMUswMDAwMDAwMDAwMDAwMDAwMDAwMDAxNAoyOmVuCjY0OmFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEKNjQ6YmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYgo1OkJSSUVGCjExOk9SSUVOVEFUSU9OCjQ6VEVYVAoyNDoyMDI2LTA4LTI2VDE2OjAwOjAwLjAwMFoKMTI6QVVUSE9SX09XTkVSCjE4OkdBTEFfUFJJU01fSEFTSF9WMQoxOjEK",
+    "hmac":"5DvnHt0khFvT1shKLwZGK8mYEWqE034pWPnwmmD_0js"
+  }
+}
+

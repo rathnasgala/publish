@@ -17,7 +17,7 @@
     "articles"
   ],
   "properties": {
-    "schemaVersion": { "const": 1 },
+    "schemaVersion": { "enum": [1, 2] },
     "commitSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
     "deploymentCommitSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
     "runId": { "type": "integer", "minimum": 1 },
@@ -66,11 +66,75 @@
         "reason": { "type": "string", "minLength": 1, "maxLength": 500 }
       }
     },
+    "prism": { "$ref": "#/$defs/prismSettings" },
     "articles": {
       "type": "array",
       "items": { "$ref": "#/$defs/article" }
     }
   },
+  "allOf": [{
+    "if": { "properties": { "schemaVersion": { "const": 2 } }, "required": ["schemaVersion"] },
+    "then": {
+      "required": ["prism"],
+      "properties": {
+        "prism": { "$ref": "#/$defs/prismSettings" },
+        "articles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "variants": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "prismSourceHash": true,
+                    "prismHashContract": true,
+                    "prismProtectionContract": true,
+                    "prismReferencedMediaDigests": true
+                  },
+                  "required": [
+                    "prismSourceHash",
+                    "prismHashContract",
+                    "prismProtectionContract",
+                    "prismReferencedMediaDigests"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "else": {
+      "allOf": [
+        { "not": { "required": ["prism"] } },
+        {
+          "properties": {
+            "articles": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "variants": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": { "configurations": { "type": "array" } },
+                      "not": {
+                        "properties": { "configurations": { "type": "array" } },
+                        "required": ["configurations"]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }],
   "$defs": {
     "ulid": {
       "type": "string",
@@ -127,7 +191,19 @@
           "type": "string",
           "pattern": "^https://(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?::[0-9]{1,5})?(?:/[^\\s]*)?$"
         },
-        "frontmatter": { "type": "object", "additionalProperties": true }
+        "frontmatter": { "type": "object", "additionalProperties": true },
+        "prismSourceHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "prismHashContract": { "const": "GALA_PRISM_HASH_V1" },
+        "prismProtectionContract": { "$ref": "#/$defs/prismProtectionContract" },
+        "prismReferencedMediaDigests": {
+          "type": "object",
+          "propertyNames": { "type": "string", "minLength": 1 },
+          "additionalProperties": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        },
+        "configurations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/prismConfiguration" }
+        }
       },
       "allOf": [{
         "if": { "properties": { "state": { "const": "PUBLISHED" } }, "required": ["state"] },
@@ -146,6 +222,78 @@
           }
         }
       }]
+    },
+    "prismSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "configurationLinkPolicy", "articleModes", "articleConfigurationLinkPolicies"],
+      "properties": {
+        "mode": { "enum": ["OFF", "PRESENTATION_ONLY", "MANUAL", "ASSISTED"] },
+        "configurationLinkPolicy": { "enum": ["NOFOLLOW", "FOLLOW"] },
+        "articleModes": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/ulid" },
+          "additionalProperties": { "enum": ["OFF", "PRESENTATION_ONLY", "MANUAL", "ASSISTED"] }
+        },
+        "articleConfigurationLinkPolicies": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/ulid" },
+          "additionalProperties": { "enum": ["NOFOLLOW", "FOLLOW"] }
+        }
+      }
+    },
+    "prismProtectionContract": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "maxProperties": 0
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schemaVersion"],
+          "properties": {
+            "schemaVersion": { "const": 1 },
+            "caveats": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "names": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "attributions": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      ]
+    },
+    "prismConfiguration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "revisionId", "approvalId", "approvalTokenVersion", "approvalTokenVerifiedWith", "hashContract", "state", "sourceRevisionHash", "contentHash", "depth", "intent", "modality", "configurationLinkPolicy", "pageUrl"],
+      "properties": {
+        "id": { "$ref": "#/$defs/ulid" },
+        "revisionId": { "$ref": "#/$defs/ulid" },
+        "approvalId": { "$ref": "#/$defs/ulid" },
+        "approvalTokenVersion": { "const": 1 },
+        "approvalTokenVerifiedWith": { "enum": ["CURRENT", "PREVIOUS"] },
+        "hashContract": { "const": "GALA_PRISM_HASH_V1" },
+        "state": { "enum": ["PUBLISHED", "STALE", "DISABLED", "REVOKED"] },
+        "sourceRevisionHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "contentHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "depth": { "enum": ["SIGNAL", "BRIEF", "STANDARD", "COMPLETE", "METHODS_REFERENCES"] },
+        "intent": { "enum": ["ORIENTATION", "STORY", "PROOF", "PRACTICE"] },
+        "modality": { "const": "TEXT" },
+        "configurationLinkPolicy": { "enum": ["NOFOLLOW", "FOLLOW"] },
+        "pageUrl": { "type": "string", "pattern": "^https://[^\\s]+$" }
+      }
     }
   }
 }

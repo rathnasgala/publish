@@ -13,6 +13,9 @@ inputs:
   site-secret:
     description: Per-site HMAC secret, consumed only by this bundled JavaScript step.
     required: true
+  previous-site-secret:
+    description: Previous per-site HMAC secret used only during the bounded rotation grace window.
+    required: false
   api-base-url:
     description: HTTPS Gala API origin.
     required: true

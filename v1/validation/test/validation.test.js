@@ -61,6 +61,43 @@ test('derives durable deployment state only from published manifest variants', (
   }]);
 });
 
+test('retains body-free Prism configuration identity for later fallback builds', () => {
+  const configuration = {
+    configurationId: '01K00000000000000000000010',
+    articleId: valid.id,
+    language: 'en',
+    revisionId: '01K00000000000000000000011',
+    approvalId: '01K00000000000000000000012',
+    approvalTokenVersion: 1,
+    approvalTokenVerifiedWith: 'CURRENT',
+    sourceRevisionHash: 'a'.repeat(64),
+    configurationContentHash: 'b'.repeat(64),
+    hashContract: 'GALA_PRISM_HASH_V1',
+    depth: 'BRIEF', intent: 'ORIENTATION', modality: 'TEXT', state: 'PUBLISHED',
+    relativeUrl: '/en/valid-post/prism/01K00000000000000000000010/',
+    configurationLinkPolicy: 'NOFOLLOW',
+    body: 'Approved prose that must not enter durable publication state.'
+  };
+
+  const deployed = derivePublicationState({
+    current: { schemaVersion: 1, posts: [] }, deployedOn: today,
+    deployedCommitSha: 'a'.repeat(40),
+    manifest: {
+      schemaVersion: 2,
+      posts: [{ source: 'content/posts/post/index.en.md', id: valid.id,
+        slug: 'valid-post', language: 'en', publicationState: PublicationState.PUBLISHED }],
+      configurations: [configuration]
+    }
+  });
+
+  assert.equal(deployed.configurations[0].configurationId, configuration.configurationId);
+  assert.equal(deployed.configurations[0].configurationContentHash,
+    configuration.configurationContentHash);
+  assert.equal(deployed.configurations[0].approvalTokenVersion, 1);
+  assert.equal(deployed.configurations[0].approvalTokenVerifiedWith, 'CURRENT');
+  assert.equal(Object.hasOwn(deployed.configurations[0], 'body'), false);
+});
+
 test('parses YAML frontmatter and preserves unknown keys', () => {
   const result = parseFrontmatter('---\ntitle: Hello\ncustomField: preserved\n---\nBody\n');
   assert.deepEqual(result.errors, []);
@@ -108,6 +145,35 @@ tags: [testing]
   assert.deepEqual(results[0].errors,
     ['raw HTML media is not allowed; use Markdown image syntax']);
   assert.deepEqual(results[0].media, []);
+});
+
+test('canonical discovery never treats Prism configuration Markdown as a post', async (context) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'gala-prism-discovery-'));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const post = path.join(root, 'content', 'posts', 'canonical');
+  const prism = path.join(post, 'prism', '01K00000000000000000000012');
+  await mkdir(prism, { recursive: true });
+  await writeFile(path.join(post, 'index.en.md'), `---
+id: 01K00000000000000000000011
+title: Canonical
+publishAfterDate: 2026-06-15
+language: en
+---
+Canonical body.
+`);
+  await writeFile(path.join(prism, 'index.en.md'), `---
+prism:
+  schemaVersion: 1
+---
+Approved configuration body.
+`);
+
+  const results = await validateContent({ root, today });
+
+  assert.equal(results.length, 1);
+  assert.equal(path.basename(results[0].file), 'index.en.md');
+  assert.equal(path.dirname(results[0].file), post);
+  assert.deepEqual(results[0].errors, []);
 });
 
 test('accepts the documented valid content contract', () => {

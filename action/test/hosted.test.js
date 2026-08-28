@@ -16,6 +16,7 @@ async function fixture() {
   await mkdir(path.join(root, 'content', 'posts', 'hello'), { recursive: true });
   await mkdir(path.join(root, '.gala'), { recursive: true });
   await mkdir(path.join(root, 'config'), { recursive: true });
+  await mkdir(path.join(root, 'lib'), { recursive: true });
   await mkdir(path.join(root, 'node_modules', '@11ty', 'eleventy'), { recursive: true });
   await writeFile(path.join(root, 'content', 'posts', 'hello', 'index.en.md'), `---
 id: 01K00000000000000000000000
@@ -57,6 +58,8 @@ const output = process.argv.find((value) => value.startsWith('--output=')).slice
 mkdirSync(output, { recursive: true });
 writeFileSync(require('node:path').join(output, 'index.html'), '<!doctype html>');
 `);
+  await writeFile(path.join(root, 'lib', 'prism-compiled-output.js'),
+    'export async function verifyPrismCompiledOutput() {}\n');
   return root;
 }
 
@@ -77,13 +80,20 @@ function input(root, overrides = {}) {
 
 test('hosted validation uses the selected config, emits only the manifest, and counts rendered pages', async () => {
   const root = await fixture();
-  const adapters = createHostedAdapters({ now: () => new Date('2026-08-11T20:00:00Z') });
+  let verified = null;
+  const adapters = createHostedAdapters({
+    now: () => new Date('2026-08-11T20:00:00Z'),
+    verifyCompiledOutput: async (request) => { verified = request; }
+  });
   const result = await adapters.validateAndBuild(input(root));
 
   assert.equal(result.skippedCount, 0);
   assert.equal(result.manifest.posts.length, 1);
   assert.equal(result.currentPageCount, 1);
   assert.match(await readFile(path.join(root, '_site', 'index.html'), 'utf8'), /doctype/);
+  assert.equal(verified.root, root);
+  assert.equal(verified.outputDirectory, path.join(root, '_site'));
+  assert.equal(verified.manifest, result.manifest);
 });
 
 test('engagement snapshot refresh writes one canonical file and is idempotent', async () => {

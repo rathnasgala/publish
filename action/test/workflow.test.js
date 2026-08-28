@@ -63,7 +63,7 @@ const promotion = await readFile(
   'utf8'
 );
 
-test('reusable workflow exposes the closed public contract with one explicit secret', () => {
+test('reusable workflow exposes current and bounded-previous secret inputs explicitly', () => {
   for (const input of [
     'operation', 'mode', 'site-id', 'api-base-url', 'output-directory', 'timezone',
     'config-path', 'floor-guard-percent', 'floor-guard-pages', 'keepalive-threshold-days',
@@ -79,6 +79,8 @@ test('reusable workflow exposes the closed public contract with one explicit sec
     assert.match(source, new RegExp(`^      ${output}:`, 'm'));
   }
   assert.match(source, /^      site-secret:\n        description:[^\n]+\n        required: true$/m);
+  assert.match(source, /^      previous-site-secret:\n        description:[^\n]+\n        required: false$/m);
+  assert.equal((source.match(/previous-site-secret: \$\{\{ secrets\.previous-site-secret \}\}/g) ?? []).length, 3);
   assert.doesNotMatch(source, /secrets:\s*inherit/);
 });
 
