@@ -19,6 +19,10 @@ test('committed bundle contains the validator and executes the public contract',
   const bundle = await readFile(path.join(actionRoot, 'dist', 'index.js'), 'utf8');
   assert.match(bundle, /reconciliation-envelope/);
   assert.match(bundle, new RegExp(validatorVersion.replaceAll('.', '\\.')));
+  assert.match(bundle, /await import\(/,
+    'the managed compiled-output verifier must remain a native runtime import');
+  assert.doesNotMatch(bundle, /__nccwpck_require__\(534\)/,
+    'the bundle loader cannot resolve publication-owned file URLs');
 
   const inputs = {
     operation: 'build',

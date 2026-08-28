@@ -130,7 +130,9 @@ async function verifyManagedPrismCompiledOutput({ root, outputDirectory, manifes
   if (!metadata.isFile() || metadata.isSymbolicLink()) {
     throw new TypeError('Prism compiled-output verifier must be a regular managed file');
   }
-  const module = await import(pathToFileURL(verifier).href);
+  // This verifier belongs to the checked-out publication, not this bundled action. Keeping the
+  // import native is required: ncc's module loader cannot resolve an external file:// URL.
+  const module = await import(/* webpackIgnore: true */ pathToFileURL(verifier).href);
   if (typeof module.verifyPrismCompiledOutput !== 'function') {
     throw new TypeError('Managed Prism compiled-output verifier has no verifier export');
   }
