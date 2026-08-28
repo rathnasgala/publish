@@ -1,6 +1,18 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 
+const REPOSITORY = 'rathnasgala/publish';
+const GENERATED_HEADER = '# GENERATED DISTRIBUTION COPY — edit the monorepo source, not this file.\n';
+const DISTRIBUTION_FILES = [
+  ['action/action.yml', 'action.yml', true],
+  ['action/.github/workflows/publish.yml', '.github/workflows/publish.yml', true],
+  ['action/.github/workflows/release-validator.yml', '.github/workflows/release-validator.yml', true],
+  ['action/.github/workflows/promote-v1.yml', '.github/workflows/promote-v1.yml', true],
+  ['action/RELEASE_README.md', 'README.md', false],
+  ['action/dist/index.js', 'dist/index.js', false],
+  ['action/dist/package.json', 'dist/package.json', false],
+];
+
 const messages = process.argv.slice(2);
 if (messages.length !== 1 || messages[0].trim() === '') {
   throw new Error('Usage: npm run push -- "commit message"');
@@ -19,6 +31,17 @@ function execute(command, args) {
   }
 }
 
+function capture(command, args) {
+  const result = spawnSync(command, args, { encoding: 'utf8', shell: false });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    if (result.stdout) process.stdout.write(result.stdout);
+    if (result.stderr) process.stderr.write(result.stderr);
+    throw new Error(`${command} exited with ${result.status ?? 1}`);
+  }
+  return result.stdout.trim();
+}
+
 function readJson(file) {
   return JSON.parse(readFileSync(file, 'utf8'));
 }
@@ -27,7 +50,7 @@ function writeJson(file, value) {
   writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, { flag: 'w' });
 }
 
-function validateRelease({ checkBundle = true } = {}) {
+function validateRelease({ checkBundle = true, checkDistribution = true } = {}) {
   execute(process.execPath, [npmExecutable, '--prefix', 'v1/validation', 'test']);
   execute(process.execPath, [npmExecutable, '--prefix', 'action', 'test']);
   execute(process.execPath, [npmExecutable, '--prefix', 'v1/validation', 'run', 'lint']);
@@ -35,6 +58,45 @@ function validateRelease({ checkBundle = true } = {}) {
   if (checkBundle) {
     execute(process.execPath, [npmExecutable, 'exec', '--yes', '--package=node@24', '--',
       'node', npmExecutable, '--prefix', 'action', 'run', 'bundle:check']);
+  }
+  if (checkDistribution) {
+    for (const [source, destination, generated] of DISTRIBUTION_FILES) {
+      const expected = `${generated ? GENERATED_HEADER : ''}${readFileSync(source, 'utf8')}`;
+      if (readFileSync(destination, 'utf8') !== expected) {
+        throw new Error(`Generated distribution file is stale: ${destination}`);
+      }
+    }
+  }
+}
+
+function synchronizeDistribution() {
+  for (const [source, destination, generated] of DISTRIBUTION_FILES) {
+    const content = `${generated ? GENERATED_HEADER : ''}${readFileSync(source, 'utf8')}`;
+    writeFileSync(destination, content);
+  }
+}
+
+async function waitForReleaseRun(commitSha) {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const runId = capture('gh', ['run', 'list', '--repo', REPOSITORY,
+      '--workflow', 'release-validator.yml', '--event', 'workflow_dispatch',
+      '--commit', commitSha, '--limit', '1', '--json', 'databaseId',
+      '--jq', '.[0].databaseId']);
+    if (/^[1-9][0-9]*$/.test(runId)) return runId;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  throw new Error(`Release workflow did not appear for commit ${commitSha}`);
+}
+
+function verifyReleasedRefs(version, releaseCommitSha) {
+  const immutableCommit = capture('gh', ['api',
+    `repos/${REPOSITORY}/commits/v${version}`, '--jq', '.sha']);
+  if (immutableCommit !== releaseCommitSha) {
+    throw new Error(`Released v${version} does not resolve to commit ${releaseCommitSha}`);
+  }
+  const channelCommit = capture('gh', ['api', `repos/${REPOSITORY}/commits/v1`, '--jq', '.sha']);
+  if (channelCommit !== releaseCommitSha) {
+    throw new Error(`Released v1 does not resolve to commit ${releaseCommitSha}`);
   }
 }
 
@@ -47,6 +109,7 @@ if (branch.error) throw branch.error;
 if (branch.status !== 0) process.exit(branch.status ?? 1);
 if (branch.stdout.trim() !== 'main') throw new Error('Publish releases must be created from main');
 
+synchronizeDistribution();
 installLockedDependencies();
 validateRelease({ checkBundle: false });
 
@@ -66,7 +129,13 @@ const generatedPaths = [
   actionPath,
   'package-lock.json',
   'action/dist/index.js',
-  'dist/index.js'
+  'dist/index.js',
+  'dist/package.json',
+  'action.yml',
+  '.github/workflows/publish.yml',
+  '.github/workflows/release-validator.yml',
+  '.github/workflows/promote-v1.yml',
+  'README.md'
 ];
 const originalBytes = new Map(generatedPaths.map((file) => [file, readFileSync(file)]));
 
@@ -81,6 +150,7 @@ try {
     '--package-lock-only', '--ignore-scripts']);
   execute(process.execPath, [npmExecutable, 'exec', '--yes', '--package=node@24', '--',
     'node', npmExecutable, '--prefix', 'action', 'run', 'bundle:write']);
+  synchronizeDistribution();
   validateRelease();
 } catch (error) {
   for (const [file, bytes] of originalBytes) writeFileSync(file, bytes);
@@ -91,22 +161,10 @@ const commitMessage = messages[0].replaceAll('%s', version);
 execute('git', ['add', '.']);
 execute('git', ['commit', '-m', commitMessage]);
 execute('git', ['push', 'origin', 'HEAD']);
+const releaseCommitSha = capture('git', ['rev-parse', 'HEAD']);
 execute('gh', ['workflow', 'run', 'release-validator.yml', '--repo', 'rathnasgala/publish',
   '--ref', 'main', '-f', `version=${version}`]);
-
-// The release workflow tags the version and moves v1 to it in the same job, so a successful
-// run is a shipped release. Splitting those apart is what left v1 stranded on old versions.
-process.stdout.write([
-  '',
-  `Releasing v${version}. The release workflow tags it and advances v1 in the same run.`,
-  '',
-  'Watch it, and confirm v1 landed on this version:',
-  '',
-  '  gh run watch --repo rathnasgala/publish "$(gh run list --repo rathnasgala/publish \\',
-  '    --workflow release-validator.yml --limit 1 --json databaseId --jq \'.[0].databaseId\')"',
-  '',
-  '  gh api repos/rathnasgala/publish/tags --jq \'.[] | select(.name=="v1") | .commit.sha\'',
-  '',
-  'Publications pick it up on their next scheduled run; dispatch one to check sooner.',
-  '',
-].join('\n'));
+const releaseRunId = await waitForReleaseRun(releaseCommitSha);
+execute('gh', ['run', 'watch', releaseRunId, '--repo', REPOSITORY, '--exit-status']);
+verifyReleasedRefs(version, releaseCommitSha);
+process.stdout.write(`Released v${version}; v1 now resolves to ${releaseCommitSha}.\n`);

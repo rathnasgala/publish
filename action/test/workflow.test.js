@@ -12,24 +12,35 @@ const rootGitignore = await readFile(new URL('../../.gitignore', import.meta.url
 test('push validates, increments both release artifacts, commits all files, and dispatches tag creation', () => {
   assert.equal(rootPackage.scripts.push, 'node action/scripts/push.js');
   const install = pushScript.indexOf("[npmExecutable, '--prefix', '.', 'ci', '--ignore-scripts']");
+  const firstSynchronization = pushScript.indexOf('synchronizeDistribution();');
   const firstValidation = pushScript.indexOf('validateRelease({ checkBundle: false });');
   const versionWrite = pushScript.indexOf('validator.version = version');
   const bundle = pushScript.indexOf("'run', 'bundle:write']");
+  const synchronize = pushScript.lastIndexOf('synchronizeDistribution();');
   const secondValidation = pushScript.lastIndexOf('validateRelease();');
   const add = pushScript.indexOf("['add', '.']");
   const commit = pushScript.indexOf("['commit', '-m', commitMessage]");
   const push = pushScript.indexOf("['push', 'origin', 'HEAD']");
   const dispatch = pushScript.indexOf("['workflow', 'run', 'release-validator.yml'");
-  assert.ok([install, firstValidation, versionWrite, bundle, secondValidation, add, commit, push, dispatch]
+  const watch = pushScript.indexOf("['run', 'watch'");
+  const verify = pushScript.indexOf('verifyReleasedRefs(version, releaseCommitSha);');
+  assert.ok([firstSynchronization, install, firstValidation, versionWrite, bundle,
+    synchronize, secondValidation,
+    add, commit, push, dispatch, watch, verify]
     .every((index) => index >= 0));
+  assert.ok(firstSynchronization < firstValidation);
   assert.ok(install < firstValidation);
   assert.ok(firstValidation < versionWrite);
   assert.ok(versionWrite < bundle);
+  assert.ok(bundle < synchronize);
+  assert.ok(synchronize < secondValidation);
   assert.ok(bundle < secondValidation);
   assert.ok(secondValidation < add);
   assert.ok(add < commit);
   assert.ok(commit < push);
   assert.ok(push < dispatch);
+  assert.ok(dispatch < watch);
+  assert.ok(watch < verify);
   assert.doesNotMatch(pushScript, /git', \['tag'/);
   assert.match(pushScript, /npmExecutable, '--prefix', 'v1\/validation', 'test'/);
   assert.match(pushScript, /if \(checkBundle\)/);
@@ -38,6 +49,25 @@ test('push validates, increments both release artifacts, commits all files, and 
   assert.match(rootGitignore, /^node_modules\/$/m);
   assert.match(pushScript, /originalBytes/);
   assert.match(pushScript, /catch \(error\)[\s\S]+writeFileSync\(file, bytes\)/);
+  assert.match(pushScript, /'--exit-status'/);
+  assert.match(pushScript, /Release workflow did not appear for commit/);
+  assert.match(pushScript, /Released v1 does not resolve to commit/);
+});
+
+test('committed root distribution is byte-identical to its canonical action sources', async () => {
+  const generatedHeader = '# GENERATED DISTRIBUTION COPY — edit the monorepo source, not this file.\n';
+  for (const [distributed, canonical] of [
+    ['../../action.yml', '../action.yml'],
+    ['../../.github/workflows/publish.yml', '../.github/workflows/publish.yml'],
+    ['../../.github/workflows/release-validator.yml', '../.github/workflows/release-validator.yml'],
+    ['../../.github/workflows/promote-v1.yml', '../.github/workflows/promote-v1.yml'],
+  ]) {
+    assert.equal(
+      await readFile(new URL(distributed, import.meta.url), 'utf8'),
+      generatedHeader + await readFile(new URL(canonical, import.meta.url), 'utf8'),
+      distributed,
+    );
+  }
 });
 
 test('push requires exactly one non-empty commit message before changing release state', () => {
