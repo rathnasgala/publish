@@ -1,7 +1,7 @@
 # Point v1 at any released version.
 #
 # Releases advance v1 on their own, so this is not part of shipping. It exists to move the
-# channel deliberately — most usefully backwards, when a release turns out to be bad and every
+# channel deliberately - most usefully backwards, when a release turns out to be bad and every
 # publication needs to be off it now.
 name: Point v1 at a released version
 

@@ -64,7 +64,7 @@ async function copy(source, target) {
 async function generatedYaml(source, target) {
   const content = await readFile(source, 'utf8');
   await mkdir(path.dirname(target), { recursive: true });
-  await writeFile(target, `# GENERATED DISTRIBUTION COPY — edit the monorepo source, not this file.\n${content}`);
+  await writeFile(target, `# GENERATED DISTRIBUTION COPY - edit the monorepo source, not this file.\n${content}`);
 }
 
 async function generatedWorkspaceManifests() {
@@ -123,7 +123,7 @@ const [sourceAction, releasedAction, sourceBundle, releasedBundle] = await Promi
   readFile(path.join(workspace, 'action/dist/index.js')),
   readFile(path.join(destination, 'dist/index.js'))
 ]);
-const generatedHeader = Buffer.from('# GENERATED DISTRIBUTION COPY — edit the monorepo source, not this file.\n');
+const generatedHeader = Buffer.from('# GENERATED DISTRIBUTION COPY - edit the monorepo source, not this file.\n');
 if (!releasedAction.subarray(generatedHeader.length).equals(sourceAction)
     || !releasedAction.subarray(0, generatedHeader.length).equals(generatedHeader)
     || !sourceBundle.equals(releasedBundle)) {

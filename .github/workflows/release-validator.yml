@@ -1,4 +1,4 @@
-# GENERATED DISTRIBUTION COPY — edit the monorepo source, not this file.
+# GENERATED DISTRIBUTION COPY - edit the monorepo source, not this file.
 name: Release validator and action
 
 on:

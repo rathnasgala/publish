@@ -2,7 +2,7 @@
 # Drives the self-updater against a fabricated publication and a fabricated registry.
 #
 # Everything is local: `npm view` and `npm pack` are shimmed by a directory placed first on PATH,
-# so the test exercises the real script — its verification, its path guards, its commit — without
+# so the test exercises the real script - its verification, its path guards, its commit - without
 # reaching npm or needing a published version.
 set -uo pipefail
 
@@ -14,12 +14,12 @@ REAL_NPM="$(command -v npm)"
 # workspace checkout. Skipped rather than failed when it is not there.
 TEMPLATE="${GALA_SITE_TEMPLATE:-$HERE/../../../site-template}"
 if [ ! -f "$TEMPLATE/scripts/stage-theme-package.js" ]; then
-  echo "site-template not found at $TEMPLATE — set GALA_SITE_TEMPLATE to run this."
+  echo "site-template not found at $TEMPLATE - set GALA_SITE_TEMPLATE to run this."
   exit 0
 fi
 pass=0; fail=0
-check() { if [ "$2" = "$3" ]; then echo "pass  $1"; pass=$((pass+1)); else echo "FAIL  $1 — expected [$3] got [$2]"; fail=$((fail+1)); fi }
-contains() { if printf '%s' "$2" | grep -qF "$3"; then echo "pass  $1"; pass=$((pass+1)); else echo "FAIL  $1 — no [$3] in output"; fail=$((fail+1)); fi }
+check() { if [ "$2" = "$3" ]; then echo "pass  $1"; pass=$((pass+1)); else echo "FAIL  $1 - expected [$3] got [$2]"; fail=$((fail+1)); fi }
+contains() { if printf '%s' "$2" | grep -qF "$3"; then echo "pass  $1"; pass=$((pass+1)); else echo "FAIL  $1 - no [$3] in output"; fail=$((fail+1)); fi }
 
 # ---------------------------------------------------------------- a package to serve
 build_package() {
@@ -49,8 +49,8 @@ shim() {
 #!/usr/bin/env bash
 if [ "\$1" = "view" ]; then
   # Answer the way npm does: resolve the requested range rather than ignoring it. A shim that
-  # replies to any range hides exactly the defect that shipped — \`^0.0.0\` 404s on every 0.x
-  # publication, so no site could ever update — and lets the suite pass on a script that cannot work.
+  # replies to any range hides exactly the defect that shipped - \`^0.0.0\` 404s on every 0.x
+  # publication, so no site could ever update - and lets the suite pass on a script that cannot work.
   spec="\$2"; range="\${spec##*@}"
   node -e '
     const [range, latest] = process.argv.slice(1);
@@ -96,7 +96,7 @@ site() {
   (cd "$dir" && git init -q && git config user.email t@t && git config user.name t && git add -A && git -c core.hooksPath=/dev/null commit -qm initial)
 }
 
-echo "— building a package and a publication —"
+echo "- building a package and a publication -"
 build_package "0.9.9" || { echo "FAIL  could not stage a package"; exit 1; }
 shim
 export PATH="$WORK/bin:$PATH"
@@ -167,7 +167,7 @@ check "and it exits cleanly, so the publish continues" "$code" "0"
 #
 # The case that broke every publish in production. The workflow checks out one exact content
 # commit; by the time the updater runs, the deployment record has already been pushed, so the
-# branch has moved on. The update has to land on top of that record and reach the remote — the
+# branch has moved on. The update has to land on top of that record and reach the remote - the
 # first version committed onto the stale checkout and never pushed at all, which both tripped the
 # action's HEAD guard and meant no publication ever moved forward.
 # The corrupted-package case rewrote this tarball in place; serve a clean one again.

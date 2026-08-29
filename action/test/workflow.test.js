@@ -60,7 +60,7 @@ test('push validates, increments both release artifacts, commits all files, and 
 });
 
 test('committed root distribution is byte-identical to its canonical action sources', async () => {
-  const generatedHeader = '# GENERATED DISTRIBUTION COPY — edit the monorepo source, not this file.\n';
+  const generatedHeader = '# GENERATED DISTRIBUTION COPY - edit the monorepo source, not this file.\n';
   for (const [distributed, canonical] of [
     ['../../action.yml', '../action.yml'],
     ['../../.github/workflows/publish.yml', '../.github/workflows/publish.yml'],
@@ -204,7 +204,7 @@ test('state persistence is post-deployment, secret-blind, and preserves caller H
   assert.doesNotMatch(persistence, /mapfile[^\n]+< <\(/);
   /*
    * A source that moved means the branch advanced while this run was building. The tree must not be
-   * written — it would be assembled from content this run never deployed — but the run must not
+   * written - it would be assembled from content this run never deployed - but the run must not
    * fail either: the deployment succeeded, and the newer run records for the newer commit.
    *
    * Exiting 1 here put a red run in the writer's repository for work that had published correctly,
@@ -273,7 +273,7 @@ test('release publishes or integrity-verifies before tagging only the immutable 
 });
 
 test('pointing v1 at a version still proves that version is real and tested', () => {
-  // Releases advance v1 themselves, so this workflow is a deliberate channel move — most
+  // Releases advance v1 themselves, so this workflow is a deliberate channel move - most
   // usefully backwards, off a bad release. It takes no canary run IDs: gating promotion on
   // canaries could never verify the action itself, because the reusable workflow invokes
   // rathnasgala/publish@v1 at every tag, so canaries always ran the previous action.

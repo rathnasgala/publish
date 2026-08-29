@@ -366,7 +366,7 @@ jobs:
           # the writer published again. Recording anyway would write a tree assembled from content
           # this run never deployed, so stopping is right. Failing is not: the deployment succeeded,
           # and the newer run records for the newer commit. Exiting 1 here put a red run in the
-          # writer's repository for work that had published correctly — on the ordinary path of
+          # writer's repository for work that had published correctly - on the ordinary path of
           # publishing shortly after creating a publication, which is when it happens every time.
           for content_path in "${assigned_paths[@]}"; do
             deployed_blob="$(git rev-parse "$GALA_DEPLOYED_COMMIT_SHA:$content_path")"
@@ -382,7 +382,7 @@ jobs:
           tree="$(git write-tree)"
           # An unchanged site has nothing to record. Without this the scheduled run writes a
           # commit whose tree is identical to its parent, every day, on a site nobody is
-          # writing to — and that commit becomes the next run's HEAD, so the churn feeds itself.
+          # writing to - and that commit becomes the next run's HEAD, so the churn feeds itself.
           if [ "$tree" = "$(git rev-parse --verify "$parent^{tree}")" ]; then
             echo 'Publication state is unchanged; no deployment record needed.'
             exit 0

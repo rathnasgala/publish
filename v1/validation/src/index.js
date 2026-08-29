@@ -28,6 +28,17 @@ const SHARE_TARGETS = new Set([
 const SOCIAL_PROFILES = new Set([
   'github', 'x', 'linkedin', 'mastodon', 'bluesky', 'website', 'rss'
 ]);
+const SLUG_GUIDANCE = 'Use only lowercase letters and numbers separated by single hyphens, '
+  + 'for example "field-notes".';
+const REQUIRED_POST_FIELDS = Object.freeze({
+  title: 'Title is missing. Add a non-empty "title" value to the post frontmatter.',
+  publishAfterDate: 'Publish date is missing. Add "publishAfterDate" in YYYY-MM-DD format to the post frontmatter.',
+  language: 'Language is missing. Add a language such as "en" or "en-US" to the post frontmatter.'
+});
+
+function shown(value) {
+  return JSON.stringify(value) ?? String(value);
+}
 
 export const PublicationState = Object.freeze({
   PUBLISHED: 'published',
@@ -120,30 +131,40 @@ export function canonicalizeLanguageTag(value) {
 export function parseFrontmatter(source) {
   if (typeof source === 'string' && source.startsWith('\uFEFF')) source = source.slice(1);
   if (typeof source !== 'string') {
-    return { data: null, body: source, errors: ['frontmatter block is required'] };
+    return { data: null, body: source, errors: [
+      'Post settings are missing. Start the file with a YAML frontmatter block between two "---" lines.'
+    ] };
   }
   const lineEnding = source.startsWith('---\r\n')
     ? '\r\n'
     : source.startsWith('---\n') ? '\n' : null;
   if (lineEnding == null) {
-    return { data: null, body: source, errors: ['frontmatter block is required'] };
+    return { data: null, body: source, errors: [
+      'Post settings are missing. Start the file with a YAML frontmatter block between two "---" lines.'
+    ] };
   }
 
   const openingLength = 3 + lineEnding.length;
   const closingMarker = `${lineEnding}---${lineEnding}`;
   const closing = source.indexOf(closingMarker, openingLength);
   if (closing === -1) {
-    return { data: null, body: '', errors: ['frontmatter block is not closed'] };
+    return { data: null, body: '', errors: [
+      'Post settings are not closed. Add a closing "---" line before the article body.'
+    ] };
   }
 
   try {
     const data = parseYaml(source.slice(openingLength, closing));
     if (data == null || Array.isArray(data) || typeof data !== 'object') {
-      return { data: null, body: '', errors: ['frontmatter must be a mapping'] };
+      return { data: null, body: '', errors: [
+        'Post settings must use YAML names and values, for example "title: My article".'
+      ] };
     }
     return { data, body: source.slice(closing + closingMarker.length), errors: [] };
   } catch (error) {
-    return { data: null, body: '', errors: [`malformed frontmatter: ${error.message}`] };
+    return { data: null, body: '', errors: [
+      `Post settings contain invalid YAML: ${error.message}. Correct the YAML between the "---" lines.`
+    ] };
   }
 }
 
@@ -156,57 +177,57 @@ export function validatePost(data, { today }) {
 
   for (const field of ['title', 'publishAfterDate', 'language']) {
     if (typeof data[field] !== 'string' || data[field].trim() === '') {
-      errors.push(`${field} is required`);
+      errors.push(REQUIRED_POST_FIELDS[field]);
     }
   }
 
   if (data.id != null && !isContentId(data.id)) {
-    errors.push('id must be a ULID');
+    errors.push(`Article ID ${shown(data.id)} is invalid. Keep the 26-character ID created by Gala, or remove "id" and create the post again.`);
   }
 
   if (data.slug != null) {
     if (typeof data.slug !== 'string' || data.slug.length > 80 || !SLUG_PATTERN.test(data.slug)) {
-      errors.push('slug must be lowercase [a-z0-9-] and at most 80 characters');
+      errors.push(`Post URL name ${shown(data.slug)} is invalid. ${SLUG_GUIDANCE} Keep it at most 80 characters.`);
     } else if (RESERVED_SLUGS.has(data.slug)) {
-      errors.push(`slug is reserved: ${data.slug}`);
+      errors.push(`Post URL name ${shown(data.slug)} is reserved for a Gala page. Choose a different slug.`);
     }
   }
   if (data.allowPublishedSlugChange != null
       && typeof data.allowPublishedSlugChange !== 'boolean') {
-    errors.push('allowPublishedSlugChange must be a boolean');
+    errors.push('"allowPublishedSlugChange" must be true or false without quotes.');
   }
 
   if (data.publishAfterDate != null && !isCalendarDate(data.publishAfterDate)) {
-    errors.push('publishAfterDate must be a valid YYYY-MM-DD date');
+    errors.push(`Publish date ${shown(data.publishAfterDate)} is invalid. Use a real date in YYYY-MM-DD format, for example "2026-08-29".`);
   }
   if (data.createdDate != null && !isCalendarDate(data.createdDate)) {
-    errors.push('createdDate must be a valid YYYY-MM-DD date');
+    errors.push(`Created date ${shown(data.createdDate)} is invalid. Use a real date in YYYY-MM-DD format, for example "2026-08-29".`);
   }
   if (data.deleteDate != null && !isCalendarDate(data.deleteDate)) {
-    errors.push('deleteDate must be a valid YYYY-MM-DD date');
+    errors.push(`Delete date ${shown(data.deleteDate)} is invalid. Use a real date in YYYY-MM-DD format, for example "2026-08-29".`);
   }
   if (
     isCalendarDate(data.publishAfterDate) &&
     isCalendarDate(data.deleteDate) &&
     data.deleteDate < data.publishAfterDate
   ) {
-    errors.push('deleteDate must not be earlier than publishAfterDate');
+    errors.push(`Delete date ${shown(data.deleteDate)} is before publish date ${shown(data.publishAfterDate)}. Move the delete date to the publish date or later.`);
   }
 
   if (data.language != null && !isLanguageTag(data.language)) {
-    errors.push('language must be a valid BCP-47 tag');
+    errors.push(`Language ${shown(data.language)} is invalid. Use a standard language code such as "en", "fr", or "en-US".`);
   }
 
   if (data.tags != null) {
     if (!Array.isArray(data.tags)) {
-      errors.push('tags must be a list');
+      errors.push('Tags must be a YAML list, for example "tags: [field-notes, writing]".');
     } else {
-      if (data.tags.length > 8) errors.push('tags must contain at most 8 values');
+      if (data.tags.length > 8) errors.push(`This post has ${data.tags.length} tags. Keep at most 8 tags.`);
       data.tags.forEach((tag, index) => {
         if (typeof tag !== 'string' || tag.length > 80 || !SLUG_PATTERN.test(tag)) {
-          errors.push(`tags[${index}] must follow slug rules`);
+          errors.push(`Tag ${index + 1} (${shown(tag)}) is invalid. ${SLUG_GUIDANCE}`);
         } else if (RESERVED_SLUGS.has(tag)) {
-          errors.push(`tags[${index}] is reserved: ${tag}`);
+          errors.push(`Tag ${index + 1} (${shown(tag)}) is reserved for a Gala page. Choose a different tag.`);
         }
       });
     }
@@ -214,14 +235,14 @@ export function validatePost(data, { today }) {
 
   if (data.editHistory != null) {
     if (!Array.isArray(data.editHistory)) {
-      errors.push('editHistory must be a list');
+      errors.push('Edit history must be a YAML list, with entries such as "2026-08-29 Corrected an example".');
     } else {
       data.editHistory.forEach((entry, index) => {
         const match = typeof entry === 'string' && entry.match(/^(\d{4}-\d{2}-\d{2})\s+(.+)$/);
         if (!match || !isCalendarDate(match[1])) {
-          errors.push(`editHistory[${index}] must be [YYYY-MM-DD] [one-line summary]`);
+          errors.push(`Edit history entry ${index + 1} (${shown(entry)}) is invalid. Use "YYYY-MM-DD one-line summary".`);
         } else if (match[1] > today) {
-          errors.push(`editHistory[${index}] must not be future-dated`);
+          errors.push(`Edit history entry ${index + 1} is dated ${match[1]}, which is after today (${today}). Use today or an earlier date.`);
         }
       });
     }
@@ -258,10 +279,10 @@ function absoluteHttpsUrl(value, field) {
   try {
     parsed = new URL(value);
   } catch {
-    throw new TypeError(`${field} must be an absolute URL`);
+    throw new TypeError(`${field} ${shown(value)} is invalid. Use a complete URL beginning with "https://".`);
   }
   if (parsed.protocol !== 'https:' || parsed.username !== '' || parsed.password !== '') {
-    throw new TypeError(`${field} must use HTTPS without credentials`);
+    throw new TypeError(`${field} ${shown(value)} is invalid. Use HTTPS and remove any username or password from the URL.`);
   }
   parsed.hash = '';
   return parsed;
@@ -472,22 +493,22 @@ export function resolveFolderSlugs(posts) {
     const folderErrors = [];
     if (group.folderName.length > 80 || !SLUG_PATTERN.test(group.folderName)) {
       folderErrors.push(
-        `post folder "${group.folderName}" is invalid; use lowercase [a-z0-9-] ` +
-        'with no leading, trailing, or repeated hyphens, maximum 80 characters'
+        `Post folder ${shown(group.folderName)} is invalid. ${SLUG_GUIDANCE} ` +
+        'Keep it at most 80 characters.'
       );
     } else if (RESERVED_SLUGS.has(group.folderName)) {
-      folderErrors.push(`post folder is reserved: ${group.folderName}`);
+      folderErrors.push(`Post folder ${shown(group.folderName)} is reserved for a Gala page. Rename the folder.`);
     }
     if (group.explicitSlugs.size > 1) {
-      folderErrors.push('language variants in one post folder declare conflicting slugs');
+      folderErrors.push('Language versions in this post folder use different slugs. Keep one slug for every language version.');
     } else if (group.explicitSlugs.size === 1) {
       const explicitSlug = group.explicitSlugs.values().next().value;
       if (explicitSlug.length > 80 || !SLUG_PATTERN.test(explicitSlug)) {
         folderErrors.push(
-          'explicit slug must be lowercase [a-z0-9-] and at most 80 characters'
+          `Explicit slug ${shown(explicitSlug)} is invalid. ${SLUG_GUIDANCE} Keep it at most 80 characters.`
         );
       } else if (RESERVED_SLUGS.has(explicitSlug)) {
-        folderErrors.push(`explicit slug is reserved: ${explicitSlug}`);
+        folderErrors.push(`Explicit slug ${shown(explicitSlug)} is reserved for a Gala page. Choose a different slug.`);
       }
     }
 
@@ -692,6 +713,27 @@ export async function markdownPostFiles(directory) {
   return nested.flat();
 }
 
+export function normalizeTypography(source) {
+  return String(source).replaceAll('\u2014', '-');
+}
+
+async function persistNormalizedTypography(root) {
+  const files = await markdownPostFiles(path.join(root, 'content', 'posts'));
+  for (const file of files) {
+    const source = await readFile(file, 'utf8');
+    const normalized = normalizeTypography(source);
+    if (normalized === source) continue;
+    const temporary = `${file}.gala-typography-${process.pid}`;
+    try {
+      await writeFile(temporary, normalized, { flag: 'wx' });
+      await rename(temporary, file);
+    } catch (error) {
+      await rm(temporary, { force: true });
+      throw error;
+    }
+  }
+}
+
 async function replaceWithId(file, source, id) {
   const opening = source.match(/^(\uFEFF?---)(\r?\n)/);
   if (opening == null) throw new TypeError(`Cannot insert id into malformed frontmatter: ${file}`);
@@ -873,7 +915,7 @@ function parsedMedia(data, body) {
     for (const candidate of candidates) {
       if ((candidate.type === 'html_block' || candidate.type === 'html_inline')
           && /<(?:img|audio|video|source|picture)\b/i.test(candidate.content)) {
-        errors.push('raw HTML media is not allowed; use Markdown image syntax');
+        errors.push('An image, audio, or video uses raw HTML. Use Markdown image syntax such as "![Description](media/photo.jpg)".');
       }
       if (candidate.type === 'image') references.push(candidate.attrGet('src'));
     }
@@ -896,31 +938,33 @@ async function validateMedia(file, data, body) {
     || /^(?:[a-z][a-z0-9+.-]*:|\/)/i.test(data.coverImage)
     || data.coverImage.includes('\\')
   )) {
-    errors.push(`coverImage must be relative to the post folder: ${data.coverImage}`);
+    errors.push(`Cover image ${shown(data.coverImage)} is invalid. Use a file path inside this post folder, for example "media/cover.jpg".`);
   }
   for (const reference of new Set(parsed.references)) {
     const resolved = path.resolve(postDirectory, reference);
     const relative = path.relative(postDirectory, resolved);
     if (relative.startsWith('..') || path.isAbsolute(relative)) {
-      errors.push(`media reference escapes the post folder: ${reference}`);
+      errors.push(`Media file ${shown(reference)} points outside this post folder. Move the file into the post folder and update the Markdown path.`);
       continue;
     }
     try {
       const realTarget = await realpath(resolved);
       const realRelative = path.relative(realPostDirectory, realTarget);
       if (realRelative.startsWith('..') || path.isAbsolute(realRelative)) {
-        errors.push(`media reference resolves outside the post folder: ${reference}`);
+        errors.push(`Media file ${shown(reference)} resolves outside this post folder. Use a regular file stored inside the post folder.`);
         continue;
       }
       if (!(await stat(realTarget)).isFile()) {
-        errors.push(`media reference is not a file: ${reference}`);
+        errors.push(`Media path ${shown(reference)} is not a file. Point it to an image, audio, or video file inside this post folder.`);
       } else {
         media.push({ reference, realTarget });
       }
     } catch (error) {
-      if (error.code === 'ENOENT') errors.push(`media reference does not exist: ${reference}`);
-      else if (error.code === 'ELOOP') errors.push(`media reference does not resolve: ${reference}`);
-      else throw error;
+      if (error.code === 'ENOENT') {
+        errors.push(`Media file ${shown(reference)} is missing. Upload it into this post folder or remove the Markdown reference.`);
+      } else if (error.code === 'ELOOP') {
+        errors.push(`Media file ${shown(reference)} points through a broken link. Replace it with a regular file inside this post folder.`);
+      } else throw error;
     }
   }
   return { errors, media };
@@ -933,15 +977,15 @@ function validatePostLocation(postsRoot, file, data) {
   const filenameLanguage = filename.match(/^index\.([^.]+)\.md$/)?.[1];
   const errors = [];
   if (segments.length !== 2 || filenameLanguage == null) {
-    errors.push('post path must be content/posts/<post-folder>/index.<lang>.md');
+    errors.push('This post is in the wrong location. Store it as "content/posts/<post-folder>/index.<language>.md", for example "content/posts/field-notes/index.en.md".');
   }
   if (filenameLanguage == null) return errors;
   if (!isLanguageTag(filenameLanguage)) {
-    errors.push(`filename language ${filenameLanguage} must be a valid BCP-47 tag`);
+    errors.push(`Filename language ${shown(filenameLanguage)} is invalid. Use a standard language code such as "en", "fr", or "en-US".`);
   } else if (isLanguageTag(data?.language)
       && canonicalizeLanguageTag(filenameLanguage) !== canonicalizeLanguageTag(data.language)) {
     errors.push(
-      `filename language ${filenameLanguage} does not match frontmatter language ${data.language}`
+      `Filename language ${shown(filenameLanguage)} does not match the post language ${shown(data.language)}. Make both language codes the same.`
     );
   }
   return errors;
@@ -952,7 +996,7 @@ export async function validateContent({ root, today, now, configPath, timezone }
   const postsRoot = path.join(root, 'content', 'posts');
   const files = await markdownPostFiles(postsRoot);
   const results = await Promise.all(files.map(async (file) => {
-    const parsed = parseFrontmatter(await readFile(file, 'utf8'));
+    const parsed = parseFrontmatter(normalizeTypography(await readFile(file, 'utf8')));
     const errors = validatePostLocation(postsRoot, file, parsed.data);
     let media = [];
     if (parsed.errors.length === 0) {
@@ -967,7 +1011,7 @@ export async function validateContent({ root, today, now, configPath, timezone }
     }
     const warnings = parsed.errors.length === 0
         && (typeof parsed.data.description !== 'string' || parsed.data.description.trim() === '')
-      ? ['description is missing; SEO metadata will use the first 160 characters of rendered body text']
+      ? ['Summary is missing. Gala will use the first 160 characters of the article in search and link previews. Add "description" to control that text.']
       : [];
     return { file, data: parsed.data, body: parsed.body, media, errors, warnings };
   }));
@@ -980,13 +1024,13 @@ export async function validateContent({ root, today, now, configPath, timezone }
   results.forEach((result, index) => { result.effectiveSlug = folderSlugs.slugs[index]; });
   for (const duplicate of findDuplicateVariants(resolved)) {
     for (const index of duplicate.indexes) {
-      results[index].errors.push(`duplicate slug-language variant: ${duplicate.slug} (${duplicate.language})`);
+      results[index].errors.push(`Another post already uses URL name ${shown(duplicate.slug)} for language ${shown(duplicate.language)}. Give one of them a different slug or folder name.`);
     }
   }
   for (const conflict of findArticleIdentityConflicts(metadata)) {
     const message = conflict.type === 'folder'
-      ? 'language variants in one post folder must share one article id'
-      : `article id is reused across post folders: ${conflict.value}`;
+      ? 'Language versions in one post folder have different article IDs. Keep the same "id" in every language file.'
+      : `Article ID ${shown(conflict.value)} is also used in another post folder. Give each article its own ID.`;
     for (const index of conflict.indexes) results[index].errors.push(message);
   }
   return results;
@@ -1051,17 +1095,22 @@ export async function regenerateBuildManifest({
   today,
   now,
   idFactory,
+  preview = false,
   configPath = 'site.config.yml',
   timezone,
   siteId = null,
   currentSiteSecret = null,
   previousSiteSecret = null
 }) {
+  if (typeof preview !== 'boolean') throw new TypeError('preview must be true or false');
   const siteRoot = path.resolve(root);
   const realSiteRoot = await realpath(siteRoot);
   const manifestPath = path.join(siteRoot, BUILD_MANIFEST_PATH);
   await rm(manifestPath, { force: true });
-  const assigned = await assignMissingContentIds(siteRoot, { idFactory });
+  // Preview is observational: opening a local server must never edit an author's repository. IDs
+  // become durable only on publish, after the CLI has incorporated the remote branch.
+  if (!preview) await persistNormalizedTypography(siteRoot);
+  const assigned = preview ? [] : await assignMissingContentIds(siteRoot, { idFactory });
   const evaluationDate = today ?? await repositoryEvaluationDate({
     root: siteRoot, now, configPath, timezone
   });
@@ -1092,9 +1141,9 @@ export async function regenerateBuildManifest({
     const previous = publishedById.get(result.data?.id);
     if (previous != null && result.effectiveSlug != null && result.effectiveSlug !== previous.slug) {
       if (overrideFolders.has(path.dirname(result.file))) {
-        result.warnings.push(`published slug changed from ${previous.slug}; static hosting emits a meta-refresh redirect, not a true 301, so some link equity will be lost`);
+        result.warnings.push(`The published URL changed from ${shown(previous.slug)} to ${shown(result.effectiveSlug)}. Gala can provide only a page redirect on static hosting, so search ranking may be reduced.`);
       } else {
-        result.errors.push(`published slug changed from ${previous.slug}; pin that slug explicitly to keep the URL`);
+        result.errors.push(`The published URL would change from ${shown(previous.slug)} to ${shown(result.effectiveSlug)}. Set "slug: ${previous.slug}" to keep the existing URL, or explicitly allow the change.`);
       }
     }
   }
@@ -1109,7 +1158,7 @@ export async function regenerateBuildManifest({
     const effective = resolveEffectivePost({
       data: result.data, slug: result.effectiveSlug, today: evaluationDate, ...location
     });
-    if (effective.publicationState === PublicationState.NOT_EMITTED) continue;
+    if (!preview && effective.publicationState === PublicationState.NOT_EMITTED) continue;
     const previous = publishedById.get(result.data.id);
     if (effective.publicationState === PublicationState.TOMBSTONED
         && !Object.hasOwn(previous?.languages ?? {}, effective.language)) continue;
@@ -1220,6 +1269,7 @@ export async function regenerateBuildManifest({
   }
   const manifest = {
     schemaVersion: prism == null ? 1 : 2,
+    ...(preview ? { preview: true } : {}),
     evaluationDate,
     themePackage: { ...siteConfig.framework.themePackage },
     statistics,

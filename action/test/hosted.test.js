@@ -145,7 +145,7 @@ test('engagement snapshot refresh writes one canonical file and is idempotent', 
 
 test('an unchanged publication keeps its deployed stamp so nothing is recorded', async () => {
   // The reported defect: a site nobody was writing to produced a commit a day. The stamp was
-  // the only difference, so a commit was written, and that commit became the next run's HEAD —
+  // the only difference, so a commit was written, and that commit became the next run's HEAD -
   // guaranteeing the next run differed too. The churn was its own cause.
   const root = await fixture();
   const adapters = createHostedAdapters({ now: () => new Date('2026-08-11T20:00:00Z') });

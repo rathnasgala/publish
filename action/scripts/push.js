@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 
 const REPOSITORY = 'rathnasgala/publish';
-const GENERATED_HEADER = '# GENERATED DISTRIBUTION COPY — edit the monorepo source, not this file.\n';
+const GENERATED_HEADER = '# GENERATED DISTRIBUTION COPY - edit the monorepo source, not this file.\n';
 const DISTRIBUTION_FILES = [
   ['action/action.yml', 'action.yml', true],
   ['action/.github/workflows/publish.yml', '.github/workflows/publish.yml', true],

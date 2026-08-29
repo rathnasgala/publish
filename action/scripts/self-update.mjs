@@ -2,8 +2,8 @@
 /**
  * Brings a publication's framework files up to date, in its own repository.
  *
- * Every site carries its own copy of the runtime — `interactions.js`, the layouts, the build
- * library — pinned by `framework.themePackage.version` in `site.config.yml` and hash-bound by
+ * Every site carries its own copy of the runtime - `interactions.js`, the layouts, the build
+ * library - pinned by `framework.themePackage.version` in `site.config.yml` and hash-bound by
  * `.gala/managed-files.json`. That makes a site self-contained and permanent: it builds with no
  * network call to Gala and keeps working if Gala does not. It also meant a framework fix could
  * never reach a site that had already been published, which is how a reader sign-in bug sat live
@@ -193,7 +193,7 @@ const major = current.split('.')[0];
 
 /*
  * The range is `<major>.x`, not `^<major>.0.0`. Caret does not mean "same major" below 1.0: npm
- * reads `^0.0.0` as exactly 0.0.0, so on a 0.x publication — which is every publication today —
+ * reads `^0.0.0` as exactly 0.0.0, so on a 0.x publication - which is every publication today -
  * the query 404s and no update is ever found. `0.x` is `>=0.0.0 <1.0.0`, which is what was meant,
  * and it carries the same meaning at every other major.
  */
@@ -289,8 +289,8 @@ writeFileSync(MANIFEST, `${JSON.stringify(incoming, null, 2)}\n`);
 
 /*
  * The pin follows the files. It is rewritten by a line-targeted replacement rather than by
- * re-serialising the YAML, because this file is the writer's — their comments, their key order,
- * their design choices — and only one value here belongs to the framework.
+ * re-serialising the YAML, because this file is the writer's - their comments, their key order,
+ * their design choices - and only one value here belongs to the framework.
  */
 if (existsSync(CONFIG)) {
   const config = readFileSync(CONFIG, 'utf8');
@@ -304,7 +304,7 @@ if (existsSync(CONFIG)) {
    *
    * A publication's performance budgets live in its own `site.config.yml`, and the build refuses
    * to run when the managed assets exceed them. So delivering a larger runtime without raising the
-   * budget hands the writer a repository that cannot build — which is exactly what happened when
+   * budget hands the writer a repository that cannot build - which is exactly what happened when
    * the reader runtime landed and every site failed with "Managed JavaScript performance budget
    * exceeded" on the run after the update.
    *
@@ -365,7 +365,7 @@ run('git', ['config', 'user.email', 'publish@gala67.com']);
  * checkout.
  *
  * The publish workflow checks out one exact content commit and the action refuses to build unless
- * HEAD is still that commit — the guarantee being that what gets published is precisely the commit
+ * HEAD is still that commit - the guarantee being that what gets published is precisely the commit
  * that was asked for. By the time this runs the deployment record has already been pushed, so the
  * checkout is behind the branch, and committing onto it would push a commit that silently drops
  * that record.
@@ -393,7 +393,7 @@ if (publishable) {
 
 run('git', ['add', '--', MANIFEST, CONFIG, ...staged.map((file) => file.relative)]);
 
-// After the reset the index may hold nothing new — the update can already be on the branch.
+// After the reset the index may hold nothing new - the update can already be on the branch.
 if (run('git', ['diff', '--cached', '--name-only']).trim() === '') {
   say(`Framework ${newest} is already recorded on ${branch}.`);
   process.exit(0);

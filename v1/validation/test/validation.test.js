@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -16,6 +16,7 @@ import {
   normalizePathPrefix,
   parseFrontmatter,
   PublicationState,
+  regenerateBuildManifest,
   resolveEffectivePost,
   resolveFolderSlugs,
   slugifyTitle,
@@ -34,6 +35,98 @@ const valid = {
   tags: ['testing'],
   editHistory: ['2026-06-14 Corrected an example']
 };
+
+async function previewFixture(context) {
+  const root = await mkdtemp(path.join(tmpdir(), 'gala-preview-manifest-'));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, '.gala'), { recursive: true });
+  await mkdir(path.join(root, 'content', 'posts', 'scheduled'), { recursive: true });
+  await writeFile(path.join(root, '.gala', 'managed-files.json'), JSON.stringify({
+    themePackage: {
+      name: '@rathnasgala/theme', version: '1.0.0', availableDesignThemes: ['editorial']
+    }
+  }));
+  await writeFile(path.join(root, 'site.config.yml'), [
+    'schemaVersion: 1',
+    'framework:',
+    '  themePackage:',
+    '    name: "@rathnasgala/theme"',
+    '    version: "1.0.0"',
+    'site:',
+    '  defaultLanguage: en',
+    '  timezone: UTC',
+    'hosting:',
+    '  canonicalBaseUrl: https://writer.example',
+    '  pathPrefix: /',
+    '  canonicalPolicy: self',
+    'design:',
+    '  theme: editorial'
+  ].join('\n'));
+  const post = path.join(root, 'content', 'posts', 'scheduled', 'index.en.md');
+  await writeFile(post, [
+    '---',
+    'title: Scheduled post',
+    'publishAfterDate: 2026-06-16',
+    'language: en',
+    '---',
+    '',
+    'Private draft body.'
+  ].join('\n'));
+  return { root, post };
+}
+
+test('preview manifest includes scheduled posts without modifying their source', async (context) => {
+  const { root, post } = await previewFixture(context);
+  const before = await readFile(post, 'utf8');
+
+  const generated = await regenerateBuildManifest({ root, today, preview: true });
+
+  assert.equal(await readFile(post, 'utf8'), before);
+  assert.equal(generated.manifest.preview, true);
+  assert.equal(generated.manifest.posts.length, 1);
+  assert.equal(generated.manifest.posts[0].publicationState, PublicationState.NOT_EMITTED);
+  assert.equal(generated.manifest.posts[0].id, null);
+  assert.deepEqual(generated.manifest.assignedContentIds, []);
+});
+
+test('preview normalizes em dashes in rendered content without modifying source', async (context) => {
+  const { root, post } = await previewFixture(context);
+  const source = (await readFile(post, 'utf8')).replace('Private draft body.', 'Private \u2014 draft.');
+  await writeFile(post, source);
+
+  const generated = await regenerateBuildManifest({ root, today, preview: true });
+
+  assert.match(generated.manifest.posts[0].body, /Private - draft\./);
+  assert.match(await readFile(post, 'utf8'), /Private \u2014 draft\./);
+});
+
+test('publish persists normalized em dashes before creating the manifest', async (context) => {
+  const { root, post } = await previewFixture(context);
+  const source = (await readFile(post, 'utf8'))
+    .replace('publishAfterDate: 2026-06-16', 'publishAfterDate: 2026-06-15')
+    .replace('Private draft body.', 'Private \u2014 draft.');
+  await writeFile(post, source);
+
+  const generated = await regenerateBuildManifest({
+    root, today, idFactory: () => '01K00000000000000000000022'
+  });
+
+  assert.match(generated.manifest.posts[0].body, /Private - draft\./);
+  assert.doesNotMatch(await readFile(post, 'utf8'), /\u2014/);
+});
+
+test('publish manifest remains the sole writer of missing article ids and withholds scheduled posts', async (context) => {
+  const { root, post } = await previewFixture(context);
+
+  const generated = await regenerateBuildManifest({
+    root, today, idFactory: () => '01K00000000000000000000009'
+  });
+
+  assert.match(await readFile(post, 'utf8'), /^---\nid: 01K00000000000000000000009\n/);
+  assert.equal(generated.manifest.preview, undefined);
+  assert.equal(generated.manifest.posts.length, 0);
+  assert.equal(generated.manifest.assignedContentIds.length, 1);
+});
 
 test('derives durable deployment state only from published manifest variants', () => {
   const deployed = derivePublicationState({
@@ -120,6 +213,18 @@ test('parses CRLF frontmatter without normalizing Markdown body bytes', () => {
   assert.notEqual(result.body, 'Body\n');
 });
 
+test('frontmatter errors explain the broken boundary or YAML and the correction', () => {
+  assert.deepEqual(parseFrontmatter('# Article\n').errors, [
+    'Post settings are missing. Start the file with a YAML frontmatter block between two "---" lines.'
+  ]);
+  assert.deepEqual(parseFrontmatter('---\ntitle: Article\n').errors, [
+    'Post settings are not closed. Add a closing "---" line before the article body.'
+  ]);
+  const malformed = parseFrontmatter('---\ntitle: [broken\n---\nBody\n').errors[0];
+  assert.match(malformed, /^Post settings contain invalid YAML:/);
+  assert.match(malformed, /Correct the YAML between the "---" lines\.$/);
+});
+
 test('one Markdown AST accepts Markdown images and rejects raw HTML media', async (context) => {
   const root = await mkdtemp(path.join(tmpdir(), 'gala-media-contract-'));
   context.after(() => rm(root, { recursive: true, force: true }));
@@ -143,8 +248,29 @@ tags: [testing]
     `${frontmatter}<img src="photo.png" alt="Photo">\n`);
   results = await validateContent({ root, today });
   assert.deepEqual(results[0].errors,
-    ['raw HTML media is not allowed; use Markdown image syntax']);
+    ['An image, audio, or video uses raw HTML. Use Markdown image syntax such as "![Description](media/photo.jpg)".']);
   assert.deepEqual(results[0].media, []);
+});
+
+test('a missing media file names the file and gives both recovery choices', async (context) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'gala-missing-media-'));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const post = path.join(root, 'content', 'posts', 'media-post');
+  await mkdir(post, { recursive: true });
+  await writeFile(path.join(post, 'index.en.md'), `---
+id: 01K00000000000000000000000
+title: Media
+publishAfterDate: 2026-06-15
+language: en
+---
+![Photo](media/missing.png)
+`);
+
+  const results = await validateContent({ root, today });
+
+  assert.deepEqual(results[0].errors, [
+    'Media file "media/missing.png" is missing. Upload it into this post folder or remove the Markdown reference.'
+  ]);
 });
 
 test('canonical discovery never treats Prism configuration Markdown as a post', async (context) => {
@@ -182,9 +308,9 @@ test('accepts the documented valid content contract', () => {
 
 test('reports required fields by name', () => {
   assert.deepEqual(validatePost({}, { today }), [
-    'title is required',
-    'publishAfterDate is required',
-    'language is required'
+    'Title is missing. Add a non-empty "title" value to the post frontmatter.',
+    'Publish date is missing. Add "publishAfterDate" in YYYY-MM-DD format to the post frontmatter.',
+    'Language is missing. Add a language such as "en" or "en-US" to the post frontmatter.'
   ]);
 });
 
@@ -195,7 +321,18 @@ test('rejects reserved and structurally invalid slugs', () => {
 
 test('applies reserved slug rules to tags', () => {
   assert.deepEqual(validatePost({ ...valid, tags: ['feed'] }, { today }), [
-    'tags[0] is reserved: feed'
+    'Tag 1 ("feed") is reserved for a Gala page. Choose a different tag.'
+  ]);
+});
+
+test('explains which tag is invalid, why it failed, and how to fix it', () => {
+  assert.deepEqual(validatePost({
+    ...valid,
+    tags: ['Field Notes', 'valid-tag', 'two--hyphens', 'trailing-']
+  }, { today }), [
+    'Tag 1 ("Field Notes") is invalid. Use only lowercase letters and numbers separated by single hyphens, for example "field-notes".',
+    'Tag 3 ("two--hyphens") is invalid. Use only lowercase letters and numbers separated by single hyphens, for example "field-notes".',
+    'Tag 4 ("trailing-") is invalid. Use only lowercase letters and numbers separated by single hyphens, for example "field-notes".'
   ]);
 });
 
@@ -207,7 +344,7 @@ test('accepts only a boolean published-slug override', () => {
   assert.deepEqual(validatePost({
     ...valid,
     allowPublishedSlugChange: 'true'
-  }, { today }), ['allowPublishedSlugChange must be a boolean']);
+  }, { today }), ['"allowPublishedSlugChange" must be true or false without quotes.']);
 });
 
 test('rejects malformed, unsafe, and credential-bearing canonical URLs per post', () => {
@@ -219,7 +356,7 @@ test('rejects malformed, unsafe, and credential-bearing canonical URLs per post'
   ]) {
     assert.match(
       validatePost({ ...valid, canonicalUrl }, { today }).join('\n'),
-      /canonicalUrl must/
+      /canonicalUrl .* is invalid/
     );
   }
   assert.deepEqual(validatePost({
@@ -231,22 +368,22 @@ test('rejects malformed, unsafe, and credential-bearing canonical URLs per post'
 test('rejects impossible dates and deletion before publication', () => {
   assert.match(
     validatePost({ ...valid, publishAfterDate: '2026-02-30' }, { today }).join('\n'),
-    /valid YYYY-MM-DD/
+    /real date in YYYY-MM-DD/
   );
   assert.match(
     validatePost({ ...valid, createdDate: '2026-02-30' }, { today }).join('\n'),
-    /createdDate must be a valid YYYY-MM-DD date/
+    /Created date .* is invalid/
   );
   assert.match(
     validatePost({ ...valid, deleteDate: '2026-06-14' }, { today }).join('\n'),
-    /must not be earlier/
+    /before publish date/
   );
 });
 
 test('rejects future edit history instead of deferring it', () => {
   assert.match(
     validatePost({ ...valid, editHistory: ['2026-06-16 Future change'] }, { today }).join('\n'),
-    /must not be future-dated/
+    /after today/
   );
 });
 
@@ -282,13 +419,15 @@ test('derives one folder-wide slug without transforming the folder name', () => 
     { folder: '/posts/My Post!', folderName: 'My Post!', language: 'en' }
   ]);
   assert.equal(invalid.slugs[0], null);
-  assert.match(invalid.errors[0][0], /post folder "My Post!" is invalid/);
-  assert.match(invalid.errors[0][0], /lowercase \[a-z0-9-\]/);
+  assert.match(invalid.errors[0][0], /Post folder "My Post!" is invalid/);
+  assert.match(invalid.errors[0][0], /lowercase letters and numbers/);
 
   const reserved = resolveFolderSlugs([
     { folder: '/posts/feed', folderName: 'feed', language: 'en' }
   ]);
-  assert.deepEqual(reserved.errors[0], ['post folder is reserved: feed']);
+  assert.deepEqual(reserved.errors[0], [
+    'Post folder "feed" is reserved for a Gala page. Rename the folder.'
+  ]);
 });
 
 test('one explicit variant slug applies to the folder and conflicting declarations fail all variants', () => {
@@ -306,7 +445,7 @@ test('one explicit variant slug applies to the folder and conflicting declaratio
   ]);
   assert.deepEqual(conflict.slugs, [null, null]);
   assert.ok(conflict.errors.every((errors) =>
-    errors.includes('language variants in one post folder declare conflicting slugs')
+    errors.includes('Language versions in this post folder use different slugs. Keep one slug for every language version.')
   ));
 
   for (const slug of ['Bad_slug', 'feed']) {
