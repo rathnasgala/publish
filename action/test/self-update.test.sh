@@ -177,7 +177,7 @@ site "0.0.15"
 export GALA_FAKE_LATEST=0.9.9
 ORIGIN="$WORK/origin.git"
 rm -rf "$ORIGIN"
-git init -q --bare "$ORIGIN"
+git init -q --bare --initial-branch=main "$ORIGIN"
 (cd "$WORK/site" && git remote add origin "$ORIGIN" && git push -q origin HEAD:refs/heads/main)
 
 # The deployment record lands on the branch after this checkout was taken, exactly as the workflow
@@ -215,7 +215,7 @@ site "0.0.15"
 export GALA_FAKE_LATEST=0.9.9
 ORIGIN="$WORK/two-phase-origin.git"
 rm -rf "$ORIGIN"
-git init -q --bare "$ORIGIN"
+git init -q --bare --initial-branch=main "$ORIGIN"
 node - "$WORK/site" <<'NODE'
 const fs = require('node:fs');
 const path = require('node:path');
@@ -281,7 +281,7 @@ check "reconciliation record is preserved" "$(test -f "$VERIFY/.gala/reconciled"
 site "0.0.15"
 export GALA_FAKE_LATEST=0.9.9
 ORIGIN="$WORK/safety-origin.git"
-rm -rf "$ORIGIN"; git init -q --bare "$ORIGIN"
+rm -rf "$ORIGIN"; git init -q --bare --initial-branch=main "$ORIGIN"
 (cd "$WORK/site" && git remote add origin "$ORIGIN" && git push -q origin HEAD:refs/heads/main)
 author_head="$(cd "$WORK/site" && git rev-parse HEAD)"
 (cd "$WORK/site" && GALA_FRAMEWORK_UPDATE_MODE=prepare GALA_AUTHOR_COMMIT_SHA="$author_head" node "$SCRIPT" >/dev/null)
@@ -306,7 +306,7 @@ check "the blocked update creates no extra commit" "$(cd "$VERIFY" && git rev-li
 site "0.0.15"
 export GALA_FAKE_LATEST=0.9.9
 ORIGIN="$WORK/content-race-origin.git"
-rm -rf "$ORIGIN"; git init -q --bare "$ORIGIN"
+rm -rf "$ORIGIN"; git init -q --bare --initial-branch=main "$ORIGIN"
 (cd "$WORK/site" && git remote add origin "$ORIGIN" && git push -q origin HEAD:refs/heads/main)
 author_head="$(cd "$WORK/site" && git rev-parse HEAD)"
 (cd "$WORK/site" && GALA_FRAMEWORK_UPDATE_MODE=prepare GALA_AUTHOR_COMMIT_SHA="$author_head" node "$SCRIPT" >/dev/null)
