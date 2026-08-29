@@ -27,6 +27,10 @@ import {
 
 const today = '2026-06-15';
 const ULID_PATTERN = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
+const LEGACY_THEME_PUBLICATION_STATES = new Set([
+  PublicationState.PUBLISHED,
+  PublicationState.TOMBSTONED
+]);
 const valid = {
   id: '01K00000000000000000000000',
   title: 'Valid post',
@@ -36,6 +40,14 @@ const valid = {
   tags: ['testing'],
   editHistory: ['2026-06-14 Corrected an example']
 };
+
+function assertLegacyThemeCanRead(manifest) {
+  for (const [index, post] of manifest.posts.entries()) {
+    assert.match(post.id, ULID_PATTERN, `legacy posts[${index}].id`);
+    assert.equal(LEGACY_THEME_PUBLICATION_STATES.has(post.publicationState), true,
+      `legacy posts[${index}].publicationState`);
+  }
+}
 
 async function previewFixture(context, {
   themeVersion = '2.0.15',
@@ -107,6 +119,7 @@ test('preview manifest remains consumable by themes predating preview publicatio
   assert.match(first.manifest.posts[0].id, /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/);
   assert.equal(second.manifest.posts[0].id, first.manifest.posts[0].id);
   assert.deepEqual(first.manifest.assignedContentIds, []);
+  assertLegacyThemeCanRead(first.manifest);
 });
 
 test('preview-state support accepts build metadata and rejects prereleases at the capability boundary', async (context) => {
@@ -155,6 +168,7 @@ test('preview compatibility covers every released-theme state and identity combi
     if (scenario.id != null) assert.equal(post.id, scenario.id, `${scenario.name}: existing id`);
     else if (scenario.generatedId) assert.match(post.id, ULID_PATTERN, `${scenario.name}: preview id`);
     else assert.equal(post.id, null, `${scenario.name}: nullable id`);
+    if (scenario.themeVersion === '2.0.12') assertLegacyThemeCanRead(generated.manifest);
   }
 });
 
@@ -185,16 +199,20 @@ test('publish persists normalized em dashes before creating the manifest', async
 });
 
 test('publish manifest remains the sole writer of missing article ids and withholds scheduled posts', async (context) => {
-  const { root, post } = await previewFixture(context);
+  const assignedIds = ['01K00000000000000000000009', '01K00000000000000000000010'];
+  for (const [index, themeVersion] of ['2.0.12', '2.0.15'].entries()) {
+    const { root, post } = await previewFixture(context, { themeVersion });
+    const assignedId = assignedIds[index];
 
-  const generated = await regenerateBuildManifest({
-    root, today, idFactory: () => '01K00000000000000000000009'
-  });
+    const generated = await regenerateBuildManifest({
+      root, today, idFactory: () => assignedId
+    });
 
-  assert.match(await readFile(post, 'utf8'), /^---\nid: 01K00000000000000000000009\n/);
-  assert.equal(generated.manifest.preview, undefined);
-  assert.equal(generated.manifest.posts.length, 0);
-  assert.equal(generated.manifest.assignedContentIds.length, 1);
+    assert.match(await readFile(post, 'utf8'), new RegExp(`^---\\nid: ${assignedId}\\n`));
+    assert.equal(generated.manifest.preview, undefined);
+    assert.equal(generated.manifest.posts.length, 0);
+    assert.equal(generated.manifest.assignedContentIds.length, 1);
+  }
 });
 
 test('derives durable deployment state only from published manifest variants', () => {
