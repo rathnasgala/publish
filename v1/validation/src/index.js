@@ -621,6 +621,31 @@ export const BUILD_MANIFEST_PATH = path.join('.gala', 'build', 'validated-posts.
 export const PUBLICATION_STATE_PATH = path.join('.gala', 'publication-state.yml');
 const THEME_PACKAGE_NAME = '@rathnasgala/theme';
 const EXACT_SEMVER = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+const PREVIEW_PUBLICATION_STATE_THEME_VERSION = Object.freeze([2, 0, 15]);
+const CROCKFORD_BASE32 = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+
+function themeSupportsPreviewPublicationState(version) {
+  const [withoutBuildMetadata] = version.split('+', 1);
+  const [core, prerelease] = withoutBuildMetadata.split('-', 2);
+  const parts = core.split('.').map(Number);
+  for (let index = 0; index < PREVIEW_PUBLICATION_STATE_THEME_VERSION.length; index += 1) {
+    if (parts[index] !== PREVIEW_PUBLICATION_STATE_THEME_VERSION[index]) {
+      return parts[index] > PREVIEW_PUBLICATION_STATE_THEME_VERSION[index];
+    }
+  }
+  return prerelease == null;
+}
+
+function deterministicPreviewContentId(source) {
+  let value = BigInt(`0x${createHash('sha256').update(`gala-preview:${source}`).digest('hex')}`)
+    & ((1n << 125n) - 1n);
+  let suffix = '';
+  for (let index = 0; index < 25; index += 1) {
+    suffix = CROCKFORD_BASE32[Number(value & 31n)] + suffix;
+    value >>= 5n;
+  }
+  return `0${suffix}`;
+}
 
 async function regularYaml(root, relativePath, description) {
   const file = path.resolve(root, relativePath);
@@ -673,6 +698,7 @@ async function validatedThemeConfiguration(root, config) {
       `design.theme ${String(config?.design?.theme)} is unavailable in ${identity.name}@${identity.version}`
     );
   }
+  return identity;
 }
 
 export async function repositoryEvaluationDate({
@@ -1148,11 +1174,14 @@ export async function regenerateBuildManifest({
     }
   }
   const siteConfig = await regularYaml(siteRoot, configPath, 'site configuration');
-  await validatedThemeConfiguration(siteRoot, siteConfig);
+  const themePackage = await validatedThemeConfiguration(siteRoot, siteConfig);
+  const legacyPreviewManifest = preview
+    && !themeSupportsPreviewPublicationState(themePackage.version);
   const location = siteLocation(siteConfig);
   const statistics = siteStatistics(siteConfig);
   const contact = normalizeContactConfiguration(siteConfig.contact);
   const posts = [];
+  const canonicalPostSources = new Set();
   for (const result of results) {
     if (result.errors.length > 0) continue;
     const effective = resolveEffectivePost({
@@ -1166,9 +1195,16 @@ export async function regenerateBuildManifest({
     if (source.startsWith('..') || path.isAbsolute(source)) {
       throw new TypeError(`Validated post escapes the site root: ${result.file}`);
     }
+    const publicationStateForManifest = legacyPreviewManifest
+      && effective.publicationState === PublicationState.NOT_EMITTED
+      ? PublicationState.PUBLISHED
+      : effective.publicationState;
+    if (effective.publicationState === PublicationState.PUBLISHED) {
+      canonicalPostSources.add(source.split(path.sep).join('/'));
+    }
     posts.push({
       source: source.split(path.sep).join('/'),
-      id: result.data.id ?? null,
+      id: result.data.id ?? (legacyPreviewManifest ? deterministicPreviewContentId(source) : null),
       rawFrontmatter: { ...result.data },
       frontmatter: { ...result.data, slug: effective.slug, language: effective.language, canonicalUrl: effective.canonicalUrl },
       contentBody: result.body,
@@ -1188,7 +1224,7 @@ export async function regenerateBuildManifest({
           output: path.posix.join(effective.relativeUrl.slice(1), reference)
         };
       }).sort((left, right) => left.output.localeCompare(right.output)),
-      publicationState: effective.publicationState
+      publicationState: publicationStateForManifest
     });
   }
   posts.sort((left, right) => left.source.localeCompare(right.source));
@@ -1228,7 +1264,7 @@ export async function regenerateBuildManifest({
     configurations = await readPrismRepository({
       root: siteRoot,
       siteId,
-      canonicalPosts: posts.filter((post) => post.publicationState === PublicationState.PUBLISHED),
+      canonicalPosts: posts.filter((post) => canonicalPostSources.has(post.source)),
       currentSiteSecret: currentSiteSecret ?? Buffer.alloc(0),
       previousSiteSecret
     });
@@ -1271,7 +1307,7 @@ export async function regenerateBuildManifest({
     schemaVersion: prism == null ? 1 : 2,
     ...(preview ? { preview: true } : {}),
     evaluationDate,
-    themePackage: { ...siteConfig.framework.themePackage },
+    themePackage: { ...themePackage },
     statistics,
     contact,
     assignedContentIds,

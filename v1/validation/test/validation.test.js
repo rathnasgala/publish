@@ -26,6 +26,7 @@ import {
 } from '../src/index.js';
 
 const today = '2026-06-15';
+const ULID_PATTERN = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
 const valid = {
   id: '01K00000000000000000000000',
   title: 'Valid post',
@@ -36,14 +37,18 @@ const valid = {
   editHistory: ['2026-06-14 Corrected an example']
 };
 
-async function previewFixture(context) {
+async function previewFixture(context, {
+  themeVersion = '2.0.15',
+  publishAfterDate = '2026-06-16',
+  id = null
+} = {}) {
   const root = await mkdtemp(path.join(tmpdir(), 'gala-preview-manifest-'));
   context.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(path.join(root, '.gala'), { recursive: true });
   await mkdir(path.join(root, 'content', 'posts', 'scheduled'), { recursive: true });
   await writeFile(path.join(root, '.gala', 'managed-files.json'), JSON.stringify({
     themePackage: {
-      name: '@rathnasgala/theme', version: '1.0.0', availableDesignThemes: ['editorial']
+      name: '@rathnasgala/theme', version: themeVersion, availableDesignThemes: ['editorial']
     }
   }));
   await writeFile(path.join(root, 'site.config.yml'), [
@@ -51,7 +56,7 @@ async function previewFixture(context) {
     'framework:',
     '  themePackage:',
     '    name: "@rathnasgala/theme"',
-    '    version: "1.0.0"',
+    `    version: "${themeVersion}"`,
     'site:',
     '  defaultLanguage: en',
     '  timezone: UTC',
@@ -65,8 +70,9 @@ async function previewFixture(context) {
   const post = path.join(root, 'content', 'posts', 'scheduled', 'index.en.md');
   await writeFile(post, [
     '---',
+    ...(id == null ? [] : [`id: ${id}`]),
     'title: Scheduled post',
-    'publishAfterDate: 2026-06-16',
+    `publishAfterDate: ${publishAfterDate}`,
     'language: en',
     '---',
     '',
@@ -87,6 +93,69 @@ test('preview manifest includes scheduled posts without modifying their source',
   assert.equal(generated.manifest.posts[0].publicationState, PublicationState.NOT_EMITTED);
   assert.equal(generated.manifest.posts[0].id, null);
   assert.deepEqual(generated.manifest.assignedContentIds, []);
+});
+
+test('preview manifest remains consumable by themes predating preview publication states', async (context) => {
+  const { root, post } = await previewFixture(context, { themeVersion: '2.0.12' });
+  const before = await readFile(post, 'utf8');
+
+  const first = await regenerateBuildManifest({ root, today, preview: true });
+  const second = await regenerateBuildManifest({ root, today, preview: true });
+
+  assert.equal(await readFile(post, 'utf8'), before);
+  assert.equal(first.manifest.posts[0].publicationState, PublicationState.PUBLISHED);
+  assert.match(first.manifest.posts[0].id, /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/);
+  assert.equal(second.manifest.posts[0].id, first.manifest.posts[0].id);
+  assert.deepEqual(first.manifest.assignedContentIds, []);
+});
+
+test('preview-state support accepts build metadata and rejects prereleases at the capability boundary', async (context) => {
+  const supported = await previewFixture(context, { themeVersion: '2.0.15+verified' });
+  const prerelease = await previewFixture(context, { themeVersion: '2.0.15-beta.1' });
+
+  const supportedManifest = await regenerateBuildManifest({ root: supported.root, today, preview: true });
+  const prereleaseManifest = await regenerateBuildManifest({ root: prerelease.root, today, preview: true });
+
+  assert.equal(supportedManifest.manifest.posts[0].publicationState, PublicationState.NOT_EMITTED);
+  assert.equal(supportedManifest.manifest.posts[0].id, null);
+  assert.equal(prereleaseManifest.manifest.posts[0].publicationState, PublicationState.PUBLISHED);
+  assert.match(prereleaseManifest.manifest.posts[0].id, /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/);
+});
+
+test('preview compatibility covers every released-theme state and identity combination', async (context) => {
+  const existingId = '01K00000000000000000000023';
+  const cases = [
+    { name: 'legacy scheduled without id', themeVersion: '2.0.12',
+      publishAfterDate: '2026-06-16', id: null, state: PublicationState.PUBLISHED, generatedId: true },
+    { name: 'legacy scheduled with id', themeVersion: '2.0.12',
+      publishAfterDate: '2026-06-16', id: existingId, state: PublicationState.PUBLISHED, generatedId: false },
+    { name: 'legacy published without id', themeVersion: '2.0.12',
+      publishAfterDate: today, id: null, state: PublicationState.PUBLISHED, generatedId: true },
+    { name: 'legacy published with id', themeVersion: '2.0.12',
+      publishAfterDate: today, id: existingId, state: PublicationState.PUBLISHED, generatedId: false },
+    { name: 'current scheduled without id', themeVersion: '2.0.15',
+      publishAfterDate: '2026-06-16', id: null, state: PublicationState.NOT_EMITTED, generatedId: false },
+    { name: 'current scheduled with id', themeVersion: '2.0.15',
+      publishAfterDate: '2026-06-16', id: existingId, state: PublicationState.NOT_EMITTED, generatedId: false },
+    { name: 'current published without id', themeVersion: '2.0.15',
+      publishAfterDate: today, id: null, state: PublicationState.PUBLISHED, generatedId: false },
+    { name: 'current published with id', themeVersion: '3.0.0',
+      publishAfterDate: today, id: existingId, state: PublicationState.PUBLISHED, generatedId: false }
+  ];
+
+  for (const scenario of cases) {
+    const fixture = await previewFixture(context, scenario);
+    const sourceBefore = await readFile(fixture.post, 'utf8');
+    const generated = await regenerateBuildManifest({ root: fixture.root, today, preview: true });
+    const post = generated.manifest.posts[0];
+
+    assert.equal(post.publicationState, scenario.state, `${scenario.name}: state`);
+    assert.equal(await readFile(fixture.post, 'utf8'), sourceBefore, `${scenario.name}: source`);
+    assert.deepEqual(generated.manifest.assignedContentIds, [], `${scenario.name}: assignments`);
+    if (scenario.id != null) assert.equal(post.id, scenario.id, `${scenario.name}: existing id`);
+    else if (scenario.generatedId) assert.match(post.id, ULID_PATTERN, `${scenario.name}: preview id`);
+    else assert.equal(post.id, null, `${scenario.name}: nullable id`);
+  }
 });
 
 test('preview normalizes em dashes in rendered content without modifying source', async (context) => {
