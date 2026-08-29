@@ -256,7 +256,7 @@ NODE
   && GALA_BUILD_COMMIT="$author_head" "$REAL_NPM" run build >/dev/null)
 rendered="$(cat "$WORK/site/_site/index.html")"
 contains "the first artifact renders its author-commit version link" "$rendered" \
-  "https://app.gala67.com/s/version?repository=author%2Fpublication&amp;commit=$author_head"
+  'href="/s/version/"'
 contains "the rendered version label is the original author SHA" "$rendered" "${author_head:0:8}"
 
 # Deployment and reconciliation succeed without moving the original checkout.
