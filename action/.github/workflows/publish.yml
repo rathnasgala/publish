@@ -124,6 +124,21 @@ jobs:
           node-version: 24.x
           package-manager-cache: false
 
+      - name: Prepare the verified framework release
+        if: inputs.operation == 'build'
+        env:
+          GALA_FRAMEWORK_AUTO_UPDATE: ${{ vars.GALA_FRAMEWORK_AUTO_UPDATE || 'true' }}
+          GALA_FRAMEWORK_UPDATE_MODE: prepare
+          GALA_AUTHOR_COMMIT_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GALA_AUTHOR_COMMIT_SHA"
+          git clone --depth 1 --branch v1 https://github.com/rathnasgala/publish \
+            "$RUNNER_TEMP/gala-publish"
+          node "$RUNNER_TEMP/gala-publish/action/scripts/self-update.mjs"
+          test "$(git rev-parse HEAD)" = "$GALA_AUTHOR_COMMIT_SHA"
+
       - name: Install the author repository dependencies
         run: npm ci
 
@@ -379,26 +394,18 @@ jobs:
           commit="$(printf '%s\n' 'chore(gala): record successful deployment [skip ci]' | git commit-tree "$tree" -p "$parent")"
           git push origin "$commit:refs/heads/$GALA_SOURCE_BRANCH"
 
-      # Last, and deliberately so.
-      #
-      # The action refuses to build unless HEAD is still the exact content commit the run was
-      # dispatched for — that is what guarantees the published site is precisely that commit. An
-      # update applied earlier moved HEAD and tripped that guard, which did not merely skip the
-      # update: it failed the publish outright. Running here, after the deployment is recorded,
-      # leaves every guarantee intact; the new framework builds on the next run, and the schedule
-      # means even a dormant publication reaches it.
-      - name: Bring the framework up to date
-        if: inputs.operation != 'acknowledge-deployment'
+      - name: Record the deployed framework release
+        if: inputs.operation == 'build' && inputs.mode == 'build-and-deploy' && steps.acknowledge.outcome == 'success' && steps.persist.outcome == 'success'
         env:
-          GALA_FRAMEWORK_AUTO_UPDATE: ${{ vars.GALA_FRAMEWORK_AUTO_UPDATE || 'true' }}
+          GALA_FRAMEWORK_UPDATE_MODE: commit
+          GALA_AUTHOR_COMMIT_SHA: ${{ github.sha }}
           GALA_UPDATE_BRANCH: ${{ github.ref_name }}
+        shell: bash
         run: |
-          # Cloned into the runner's temp rather than the workspace: the updater decides what to
-          # record from `git status`, and a checkout inside the writer's repository would be noise
-          # in it. `v1` matches the tag this workflow and its action are already pinned to.
-          git clone --depth 1 --branch v1 https://github.com/rathnasgala/publish \
-            "$RUNNER_TEMP/gala-publish" 2>/dev/null || exit 0
-          node "$RUNNER_TEMP/gala-publish/action/scripts/self-update.mjs" || true
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GALA_AUTHOR_COMMIT_SHA"
+          node "$RUNNER_TEMP/gala-publish/action/scripts/self-update.mjs"
+          test "$(git rev-parse HEAD)" = "$GALA_AUTHOR_COMMIT_SHA"
 
       - name: Publish final run report
         id: final

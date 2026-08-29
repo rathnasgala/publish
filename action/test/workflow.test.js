@@ -7,7 +7,12 @@ import test from 'node:test';
 const pushScript = await readFile(new URL('../scripts/push.js', import.meta.url), 'utf8');
 const pushScriptPath = fileURLToPath(new URL('../scripts/push.js', import.meta.url));
 const rootPackage = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
+const actionPackage = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 const rootGitignore = await readFile(new URL('../../.gitignore', import.meta.url), 'utf8');
+const actionBundle = await readFile(
+  new URL('../../.github/workflows/action-bundle.yml', import.meta.url),
+  'utf8'
+);
 
 test('push validates, increments both release artifacts, commits all files, and dispatches tag creation', () => {
   assert.equal(rootPackage.scripts.push, 'node action/scripts/push.js');
@@ -127,6 +132,43 @@ test('workflow uses the published bundle and keeps deployment out of the signing
   assert.match(source, /deployed-commit-sha: \$\{\{ github\.sha \}\}/);
   assert.match(source, /deployment-commit-sha: \$\{\{ steps\.deploy\.outputs\.deployment-commit-sha \}\}/);
   assert.match(source, /recorded-state-sha: \$\{\{ github\.sha \}\}/);
+});
+
+test('one build overlays the verified framework before install and records it only after deployment', () => {
+  const prepare = source.indexOf('- name: Prepare the verified framework release');
+  const install = source.indexOf('- name: Install the author repository dependencies');
+  const build = source.indexOf('- name: Validate and build');
+  const deploy = source.indexOf('- name: Publish the guarded artifact to gh-pages');
+  const reconcile = source.indexOf('- name: Reconcile the action-owned deployment');
+  const persist = source.indexOf('- name: Record successful action-owned deployment');
+  const frameworkCommit = source.indexOf('- name: Record the deployed framework release');
+  assert.ok(prepare > 0 && prepare < install && install < build && build < deploy
+    && deploy < reconcile && reconcile < persist && persist < frameworkCommit);
+  assert.match(source.slice(prepare, install), /GALA_FRAMEWORK_UPDATE_MODE: prepare/);
+  assert.match(source.slice(frameworkCommit), /GALA_FRAMEWORK_UPDATE_MODE: commit/);
+  assert.match(source.slice(frameworkCommit), /steps\.acknowledge\.outcome == 'success'/);
+  assert.match(source.slice(frameworkCommit), /steps\.persist\.outcome == 'success'/);
+  assert.doesNotMatch(source, /Bring the framework up to date/);
+});
+
+test('framework overlay preserves author HEAD and records dual artifact provenance', () => {
+  const prepare = source.slice(
+    source.indexOf('- name: Prepare the verified framework release'),
+    source.indexOf('- name: Install the author repository dependencies')
+  );
+  assert.match(prepare, /GALA_AUTHOR_COMMIT_SHA: \$\{\{ github\.sha \}\}/);
+  assert.match(prepare, /test "\$\(git rev-parse HEAD\)" = "\$GALA_AUTHOR_COMMIT_SHA"/);
+  assert.doesNotMatch(prepare, /git (?:checkout|reset|commit)/);
+  assert.match(source, /deployed-commit-sha: \$\{\{ github\.sha \}\}/);
+  assert.match(source, /deployment-commit-sha: \$\{\{ steps\.deploy\.outputs\.deployment-commit-sha \}\}/);
+});
+
+test('the install-build-deploy framework flow is mandatory in CI and release validation', () => {
+  assert.match(actionPackage.scripts.test, /bash test\/self-update\.test\.sh/);
+  for (const workflow of [actionBundle, release]) {
+    assert.match(workflow, /repository: rathnasgala\/site-template/);
+    assert.match(workflow, /GALA_SITE_TEMPLATE: \$\{\{ github\.workspace \}\}\/site-template/);
+  }
 });
 
 test('workflow reports every deployment or acknowledgement failure through the signed action', () => {

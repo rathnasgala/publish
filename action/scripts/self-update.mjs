@@ -26,12 +26,16 @@
  */
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync, existsSync, cpSync, mkdirSync } from 'node:fs';
+import {
+  cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const MANIFEST = '.gala/managed-files.json';
 const CONFIG = 'site.config.yml';
+const RECEIPT = '.gala/build/framework-update.json';
+const MODE = process.env.GALA_FRAMEWORK_UPDATE_MODE ?? 'apply-and-commit';
 
 const say = (message) => process.stdout.write(`${message}\n`);
 
@@ -43,6 +47,125 @@ function decline(reason) {
 
 function run(command, args, options = {}) {
   return execFileSync(command, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...options });
+}
+
+function optionalRun(command, args, options = {}) {
+  try {
+    return run(command, args, options).trim();
+  } catch {
+    return null;
+  }
+}
+
+function requireCommit(value, field) {
+  if (typeof value !== 'string' || !/^[0-9a-f]{40}$/.test(value)) {
+    throw new TypeError(`${field} must be a lowercase commit SHA`);
+  }
+  return value;
+}
+
+function safePath(relative) {
+  return typeof relative === 'string' && relative !== '' && !path.isAbsolute(relative)
+    && !relative.split('/').some((segment) => segment === '' || segment === '.' || segment === '..');
+}
+
+function fileHash(relative) {
+  const metadata = lstatSync(relative);
+  if (!metadata.isFile() || metadata.isSymbolicLink()) {
+    throw new TypeError(`prepared framework path is not a regular file: ${relative}`);
+  }
+  return createHash('sha256').update(readFileSync(relative)).digest('hex');
+}
+
+function commitPreparedUpdate() {
+  if (!existsSync(RECEIPT)) decline('there is no prepared framework update to record');
+  let receipt;
+  try {
+    receipt = JSON.parse(readFileSync(RECEIPT, 'utf8'));
+  } catch (error) {
+    throw new TypeError(`prepared framework receipt is invalid (${error.message})`);
+  }
+  const expected = requireCommit(process.env.GALA_AUTHOR_COMMIT_SHA, 'GALA_AUTHOR_COMMIT_SHA');
+  const head = requireCommit(run('git', ['rev-parse', 'HEAD']).trim(), 'checkout HEAD');
+  if (head !== expected || receipt?.schemaVersion !== 1 || receipt.baseCommit !== expected
+      || !Array.isArray(receipt.files) || receipt.files.length === 0
+      || typeof receipt.themePackage?.version !== 'string') {
+    throw new TypeError('prepared framework receipt does not belong to the author commit');
+  }
+  const paths = new Set();
+  for (const file of receipt.files) {
+    if (!safePath(file?.path) || !/^[a-f0-9]{64}$/.test(file?.sha256 ?? '')
+        || paths.has(file.path) || fileHash(file.path) !== file.sha256) {
+      throw new TypeError(`prepared framework receipt does not match ${file?.path ?? 'an invalid path'}`);
+    }
+    paths.add(file.path);
+  }
+
+  const branch = (process.env.GALA_UPDATE_BRANCH ?? '').trim();
+  if (branch === '' || branch === 'HEAD') decline('there is no author branch to update');
+  run('git', ['check-ref-format', '--branch', branch]);
+  run('git', ['fetch', '--no-tags', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`]);
+  const remoteRef = `refs/remotes/origin/${branch}`;
+  const parent = requireCommit(run('git', ['rev-parse', `${remoteRef}^{commit}`]).trim(), 'remote branch');
+
+  for (const file of receipt.files) {
+    const originalBlob = optionalRun('git', ['rev-parse', `${expected}:${file.path}`]);
+    const remoteBlob = optionalRun('git', ['rev-parse', `${parent}:${file.path}`]);
+    if (originalBlob !== remoteBlob) {
+      decline(`${file.path} changed concurrently; the author's version was not overwritten`);
+    }
+  }
+
+  const temporary = mkdtempSync(path.join(tmpdir(), 'gala-framework-index-'));
+  const index = path.join(temporary, 'index');
+  const env = { ...process.env, GIT_INDEX_FILE: index };
+  try {
+    run('git', ['read-tree', `${parent}^{tree}`], { env });
+    for (const file of receipt.files) {
+      const blob = run('git', ['hash-object', '-w', '--', file.path]).trim();
+      const listing = optionalRun('git', ['ls-tree', parent, '--', file.path]);
+      const mode = listing?.match(/^([0-7]{6})\s/)?.[1] ?? '100644';
+      run('git', ['update-index', '--add', '--cacheinfo', `${mode},${blob},${file.path}`], { env });
+    }
+    const tree = run('git', ['write-tree'], { env }).trim();
+    if (tree === run('git', ['rev-parse', `${parent}^{tree}`]).trim()) {
+      say(`Framework ${receipt.themePackage.version} is already recorded on ${branch}.`);
+      return;
+    }
+    const identity = {
+      ...process.env,
+      GIT_AUTHOR_NAME: 'gala-publish[bot]',
+      GIT_AUTHOR_EMAIL: 'publish@gala67.com',
+      GIT_COMMITTER_NAME: 'gala-publish[bot]',
+      GIT_COMMITTER_EMAIL: 'publish@gala67.com',
+    };
+    const message = `Update the Gala framework to ${receipt.themePackage.version}\n\n`
+      + `Built and deployed for author commit ${expected}. Every recorded byte was verified `
+      + 'against the prepared framework receipt before this commit was created.';
+    const commit = requireCommit(
+      run('git', ['commit-tree', tree, '-p', parent, '-m', message], { env: identity }).trim(),
+      'framework commit',
+    );
+    try {
+      run('git', [
+        'push', `--force-with-lease=refs/heads/${branch}:${parent}`, 'origin',
+        `${commit}:refs/heads/${branch}`,
+      ]);
+    } catch {
+      decline('the author branch advanced during framework write-back; nothing was overwritten');
+    }
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+  say(`Framework updated to ${receipt.themePackage.version}.`);
+}
+
+if (MODE === 'commit') {
+  commitPreparedUpdate();
+  process.exit(0);
+}
+if (!['prepare', 'apply-and-commit'].includes(MODE)) {
+  throw new TypeError(`Unsupported GALA_FRAMEWORK_UPDATE_MODE: ${MODE}`);
 }
 
 // ---------------------------------------------------------------- what is installed
@@ -198,6 +321,29 @@ if (existsSync(CONFIG)) {
   }
 
   if (updated !== config) writeFileSync(CONFIG, updated);
+}
+
+if (MODE === 'prepare') {
+  const baseCommit = requireCommit(process.env.GALA_AUTHOR_COMMIT_SHA, 'GALA_AUTHOR_COMMIT_SHA');
+  const head = requireCommit(run('git', ['rev-parse', 'HEAD']).trim(), 'checkout HEAD');
+  if (head !== baseCommit) throw new Error(`Checkout HEAD ${head} does not match author commit ${baseCommit}`);
+  const candidates = [...new Set([MANIFEST, CONFIG, ...staged.map(({ relative }) => relative)])];
+  const files = candidates
+    .filter((relative) => optionalRun('git', ['status', '--porcelain', '--', relative]) !== '')
+    .map((relative) => ({ path: relative, sha256: fileHash(relative) }));
+  if (files.length === 0) {
+    say(`Framework ${newest} is already present in the author commit.`);
+    process.exit(0);
+  }
+  mkdirSync(path.dirname(RECEIPT), { recursive: true });
+  writeFileSync(RECEIPT, `${JSON.stringify({
+    schemaVersion: 1,
+    baseCommit,
+    themePackage: { name, version: newest },
+    files,
+  }, null, 2)}\n`);
+  say(`Framework prepared at ${newest}; checkout HEAD remains ${baseCommit}.`);
+  process.exit(0);
 }
 
 // ---------------------------------------------------------------- record it

@@ -9,6 +9,7 @@ set -uo pipefail
 WORK="$(mktemp -d)"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT="$HERE/../scripts/self-update.mjs"
+REAL_NPM="$(command -v npm)"
 # The theme payload is staged from site-template, which sits beside this repository in a
 # workspace checkout. Skipped rather than failed when it is not there.
 TEMPLATE="${GALA_SITE_TEMPLATE:-$HERE/../../../site-template}"
@@ -208,6 +209,120 @@ out="$(cd "$WORK/site" && GALA_UPDATE_BRANCH=main node "$SCRIPT" 2>&1)"
 check "a second run adds nothing" \
   "$(cd "$VERIFY" && git fetch -q origin main && git rev-list --count FETCH_HEAD)" \
   "$(cd "$VERIFY" && git rev-list --count FETCH_HEAD)"
+
+# ================================================================ one-run prepare and post-deploy record
+site "0.0.15"
+export GALA_FAKE_LATEST=0.9.9
+ORIGIN="$WORK/two-phase-origin.git"
+rm -rf "$ORIGIN"
+git init -q --bare "$ORIGIN"
+node - "$WORK/site" <<'NODE'
+const fs = require('node:fs');
+const path = require('node:path');
+const root = process.argv[2];
+const configPath = path.join(root, 'site.config.yml');
+const config = fs.readFileSync(configPath, 'utf8')
+  .replace('repository: unavailable', 'repository: author/publication')
+  .replace('canonicalBaseUrl: unavailable', 'canonicalBaseUrl: https://author.example')
+  .replace('pathPrefix: /unavailable', 'pathPrefix: /');
+fs.writeFileSync(configPath, config);
+NODE
+(cd "$WORK/site" && git add site.config.yml \
+  && git -c core.hooksPath=/dev/null commit --amend --no-edit -q)
+(cd "$WORK/site" && git remote add origin "$ORIGIN" && git push -q origin HEAD:refs/heads/main)
+author_head="$(cd "$WORK/site" && git rev-parse HEAD)"
+out="$(cd "$WORK/site" && GALA_FRAMEWORK_UPDATE_MODE=prepare GALA_AUTHOR_COMMIT_SHA="$author_head" node "$SCRIPT" 2>&1)"
+contains "prepare overlays the verified release" "$out" "Framework prepared at 0.9.9"
+check "prepare preserves author HEAD" "$(cd "$WORK/site" && git rev-parse HEAD)" "$author_head"
+check "prepare emits a hash-bound receipt" \
+  "$(node -e "const r=require('$WORK/site/.gala/build/framework-update.json'); process.stdout.write(r.baseCommit)")" \
+  "$author_head"
+
+# Install and build the overlaid release while HEAD still identifies the author's exact content.
+node - "$WORK/site" <<'NODE'
+const fs = require('node:fs');
+const path = require('node:path');
+const root = process.argv[2];
+fs.mkdirSync(path.join(root, '.gala', 'build'), { recursive: true });
+fs.writeFileSync(path.join(root, '.gala', 'build', 'validated-posts.json'), JSON.stringify({
+  schemaVersion: 1,
+  evaluationDate: '2026-08-28',
+  assignedContentIds: [],
+  posts: [],
+  redirects: []
+}));
+NODE
+(cd "$WORK/site" && "$REAL_NPM" ci --ignore-scripts >/dev/null \
+  && GALA_BUILD_COMMIT="$author_head" "$REAL_NPM" run build >/dev/null)
+rendered="$(cat "$WORK/site/_site/index.html")"
+contains "the first artifact renders its author-commit version link" "$rendered" \
+  "https://app.gala67.com/s/version?repository=author%2Fpublication&amp;commit=$author_head"
+contains "the rendered version label is the original author SHA" "$rendered" "${author_head:0:8}"
+
+# Deployment and reconciliation succeed without moving the original checkout.
+RECORDER="$WORK/two-phase-recorder"
+git clone -q "$ORIGIN" "$RECORDER"
+(cd "$RECORDER" && git config user.email t@t && git config user.name t \
+  && mkdir -p .gala && echo 'reconciled' > .gala/reconciled \
+  && git add .gala/reconciled && git -c core.hooksPath=/dev/null commit -qm 'record deployment' \
+  && git push -q origin HEAD:refs/heads/main)
+
+out="$(cd "$WORK/site" && GALA_FRAMEWORK_UPDATE_MODE=commit GALA_UPDATE_BRANCH=main GALA_AUTHOR_COMMIT_SHA="$author_head" node "$SCRIPT" 2>&1)"
+contains "successful deployment records the prepared bytes" "$out" "Framework updated to 0.9.9"
+check "recording still preserves checkout HEAD" "$(cd "$WORK/site" && git rev-parse HEAD)" "$author_head"
+VERIFY="$WORK/two-phase-verify"
+git clone -q "$ORIGIN" "$VERIFY"
+check "framework is committed after reconciliation" \
+  "$(node -e "console.log(JSON.parse(require('fs').readFileSync('$VERIFY/.gala/managed-files.json')).themePackage.version)")" \
+  "0.9.9"
+check "reconciliation record is preserved" "$(test -f "$VERIFY/.gala/reconciled" && echo present)" "present"
+
+# ================================================================ failures and concurrency never overwrite
+site "0.0.15"
+export GALA_FAKE_LATEST=0.9.9
+ORIGIN="$WORK/safety-origin.git"
+rm -rf "$ORIGIN"; git init -q --bare "$ORIGIN"
+(cd "$WORK/site" && git remote add origin "$ORIGIN" && git push -q origin HEAD:refs/heads/main)
+author_head="$(cd "$WORK/site" && git rev-parse HEAD)"
+(cd "$WORK/site" && GALA_FRAMEWORK_UPDATE_MODE=prepare GALA_AUTHOR_COMMIT_SHA="$author_head" node "$SCRIPT" >/dev/null)
+check "a failed deployment writes no framework commit" \
+  "$(git --git-dir="$ORIGIN" rev-list --count main)" "1"
+
+CONCURRENT="$WORK/concurrent"
+git clone -q "$ORIGIN" "$CONCURRENT"
+(cd "$CONCURRENT" && git config user.email t@t && git config user.name t \
+  && printf '\n# author change\n' >> site.config.yml && git add site.config.yml \
+  && git -c core.hooksPath=/dev/null commit -qm 'author changes settings' \
+  && git push -q origin HEAD:refs/heads/main)
+out="$(cd "$WORK/site" && GALA_FRAMEWORK_UPDATE_MODE=commit GALA_UPDATE_BRANCH=main GALA_AUTHOR_COMMIT_SHA="$author_head" node "$SCRIPT" 2>&1)"
+contains "a concurrent managed-path change blocks write-back" "$out" "changed concurrently"
+VERIFY="$WORK/safety-verify"
+git clone -q "$ORIGIN" "$VERIFY"
+contains "the author's concurrent change survives" "$(cat "$VERIFY/site.config.yml")" "# author change"
+check "the blocked update creates no extra commit" "$(cd "$VERIFY" && git rev-list --count HEAD)" "2"
+
+# An author may publish again while this run deploys. Their content commit becomes the parent of
+# the framework commit and must survive byte-for-byte because it is outside the managed path set.
+site "0.0.15"
+export GALA_FAKE_LATEST=0.9.9
+ORIGIN="$WORK/content-race-origin.git"
+rm -rf "$ORIGIN"; git init -q --bare "$ORIGIN"
+(cd "$WORK/site" && git remote add origin "$ORIGIN" && git push -q origin HEAD:refs/heads/main)
+author_head="$(cd "$WORK/site" && git rev-parse HEAD)"
+(cd "$WORK/site" && GALA_FRAMEWORK_UPDATE_MODE=prepare GALA_AUTHOR_COMMIT_SHA="$author_head" node "$SCRIPT" >/dev/null)
+CONCURRENT="$WORK/content-race"
+git clone -q "$ORIGIN" "$CONCURRENT"
+(cd "$CONCURRENT" && git config user.email t@t && git config user.name t \
+  && printf '\nauthor concurrent prose\n' >> content/posts/mine/index.en.md \
+  && git add content/posts/mine/index.en.md \
+  && git -c core.hooksPath=/dev/null commit -qm 'author publishes again' \
+  && git push -q origin HEAD:refs/heads/main)
+out="$(cd "$WORK/site" && GALA_FRAMEWORK_UPDATE_MODE=commit GALA_UPDATE_BRANCH=main GALA_AUTHOR_COMMIT_SHA="$author_head" node "$SCRIPT" 2>&1)"
+contains "a concurrent content commit still permits safe framework write-back" "$out" "Framework updated to 0.9.9"
+VERIFY="$WORK/content-race-verify"
+git clone -q "$ORIGIN" "$VERIFY"
+contains "concurrent author prose survives byte-for-byte" \
+  "$(cat "$VERIFY/content/posts/mine/index.en.md")" "author concurrent prose"
 
 echo
 echo "$pass passed, $fail failed"
