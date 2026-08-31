@@ -143,6 +143,34 @@ test('engagement snapshot refresh writes one canonical file and is idempotent', 
   );
 });
 
+test('authoritative build settings refresh writes the build-scoped policy file', async () => {
+  const root = await fixture();
+  const settings = {
+    schemaVersion: 1,
+    generatedAt: '2026-08-11T20:00:00Z',
+    paginationPolicy: { minimumPageSize: 12, maximumPageSize: 100, defaultPageSize: 24 }
+  };
+  const adapters = createHostedAdapters({
+    now: () => new Date('2026-08-11T20:00:00Z'),
+    fetchImpl: async () => new Response(JSON.stringify(settings), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    })
+  });
+
+  await adapters.refreshBuildSettings(input(root, {
+    apiBaseUrl: 'https://api.gala67.com',
+    siteSecret: 's'.repeat(32),
+    runId: '123',
+    runAttempt: 1
+  }));
+
+  assert.equal(
+    await readFile(path.join(root, '.gala', 'build', 'build-settings.json'), 'utf8'),
+    `${JSON.stringify(settings, null, 2)}\n`
+  );
+});
+
 test('an unchanged publication keeps its deployed stamp so nothing is recorded', async () => {
   // The reported defect: a site nobody was writing to produced a commit a day. The stamp was
   // the only difference, so a commit was written, and that commit became the next run's HEAD -

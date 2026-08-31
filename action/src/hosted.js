@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { readEngagementSnapshot } from './transport.js';
+import { readBuildSettings, readEngagementSnapshot } from './transport.js';
 import { attributionTier } from './attribution.js';
 
 import * as core from '@actions/core';
@@ -202,6 +202,18 @@ export function createHostedAdapters({
           throw new Error(`Recorded state changed content other than the assigned ULID in ${file}`);
         }
       }
+    },
+    refreshBuildSettings: async (input) => {
+      const settings = await readBuildSettings({
+        apiBaseUrl: input.apiBaseUrl,
+        siteId: input.siteId,
+        siteSecret: input.siteSecret,
+        runId: input.runId,
+        runAttempt: input.runAttempt,
+        emittedAt: now().toISOString(),
+        fetchImpl
+      });
+      await atomicJson(path.join(input.root, '.gala', 'build', 'build-settings.json'), settings);
     },
     refreshEngagementSnapshot: async (input) => {
       const snapshot = await readEngagementSnapshot({

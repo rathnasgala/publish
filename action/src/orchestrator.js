@@ -106,6 +106,13 @@ export async function runAction(input, adapters) {
     if (operation === ActionOperation.ACKNOWLEDGE_DEPLOYMENT) {
       await adapters.verifyRecordedState(input);
     }
+    if (operation === ActionOperation.BUILD
+        || operation === ActionOperation.ACKNOWLEDGE_DEPLOYMENT) {
+      if (adapters.refreshBuildSettings == null) {
+        throw new Error('Authoritative build settings reader is unavailable');
+      }
+      await adapters.refreshBuildSettings(input);
+    }
     if (operation === ActionOperation.BUILD && adapters.refreshEngagementSnapshot != null) {
       try {
         engagementSnapshotHash = await adapters.refreshEngagementSnapshot(input);

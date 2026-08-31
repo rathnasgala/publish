@@ -12,6 +12,7 @@ import { ActionOperation, BuildMode, runAction } from '../src/orchestrator.js';
 import { runLocalFixture } from '../src/local.js';
 import {
   ReconciliationTransportError,
+  readBuildSettings,
   readEngagementSnapshot,
   sendBuildFailure,
   sendReconciliation,
@@ -349,12 +350,41 @@ test('reads the signed engagement snapshot without placing credentials in the bo
   assert.equal(request.headers['Gala-Signature'], signReconciliationBody(SITE, request.body, SECRET));
 });
 
+test('reads authoritative signed build settings without placing credentials in the body', async () => {
+  let request;
+  const result = await readBuildSettings({
+    apiBaseUrl: 'https://api.example.com',
+    siteId: SITE,
+    siteSecret: SECRET,
+    runId: 42,
+    runAttempt: 1,
+    emittedAt: '2026-08-11T20:00:00.000Z',
+    fetchImpl: async (url, options) => {
+      request = { url: url.toString(), ...options };
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          schemaVersion: 1,
+          generatedAt: '2026-08-11T20:00:00Z',
+          paginationPolicy: { minimumPageSize: 12, maximumPageSize: 100, defaultPageSize: 24 }
+        })
+      };
+    }
+  });
+  assert.equal(request.url, `https://api.example.com/v1/sites/${SITE}/build-settings/read`);
+  assert.equal(request.body.includes(SECRET), false);
+  assert.equal(result.paginationPolicy.defaultPageSize, 24);
+  assert.equal(request.headers['Gala-Signature'], signReconciliationBody(SITE, request.body, SECRET));
+});
+
 function adapters(overrides = {}) {
   const calls = [];
   return {
     calls,
     value: {
       currentCommitSha: async () => { calls.push('head'); return SHA; },
+      refreshBuildSettings: async () => {},
       verifyRecordedState: async () => { calls.push('verify-recorded-state'); },
       validateAndBuild: async () => { calls.push('build'); return manifest(); },
       keepalive: async () => { calls.push('keepalive'); },
@@ -406,6 +436,15 @@ test('snapshot refresh failure warns and never blocks the build', async () => {
   assert.equal(result.outcome, 'PARTIAL');
   assert.equal(fixture.calls.includes('warn'), true);
   assert.equal(fixture.calls.includes('build'), true);
+});
+
+test('build settings refresh failure stops before validation', async () => {
+  const fixture = adapters({
+    refreshBuildSettings: async () => { throw new Error('platform unavailable'); }
+  });
+  await assert.rejects(() => runAction(input(), fixture.value), /platform unavailable/);
+  assert.equal(fixture.calls.includes('build'), false);
+  assert.equal(fixture.calls.includes('build-failure'), true);
 });
 
 test('reports validation skips and keepalive observability without putting failures in the manifest', async () => {
@@ -606,6 +645,24 @@ test('acknowledgement preserves a staged floor override as PARTIAL', async () =>
   assert.ok(fixture.calls.includes('verify-recorded-state'));
 });
 
+test('acknowledgement refreshes authoritative build settings before rebuilding', async () => {
+  const calls = [];
+  const fixture = adapters({
+    refreshBuildSettings: async () => { calls.push('settings'); },
+    validateAndBuild: async () => {
+      calls.push('build');
+      return { manifest: { schemaVersion: 1, posts: [] }, skippedCount: 0 };
+    }
+  });
+
+  await runAction(input({
+    operation: 'acknowledge-deployment',
+    mode: 'build-only'
+  }), fixture.value);
+
+  assert.deepEqual(calls, ['settings', 'build']);
+});
+
 test('acknowledgement signs the live deployed SHA rather than the reconstruction SHA', async () => {
   const deployedCommitSha = 'b'.repeat(40);
   let envelope;
@@ -677,7 +734,10 @@ writeFileSync(require('node:path').join(output, 'index.html'), '<!doctype html>'
   const result = await runLocalFixture({
     root,
     input: input({ configPath: 'site.config.yml', timezone: 'UTC', outputDirectory: '_site' }),
-    adapters: { now: () => new Date('2026-08-11T20:00:00Z') }
+    adapters: {
+      now: () => new Date('2026-08-11T20:00:00Z'),
+      refreshBuildSettings: async () => {}
+    }
   });
   assert.equal(result.outcome, 'PARTIAL');
   assert.match(

@@ -200,3 +200,51 @@ export async function readEngagementSnapshot({
   }
   return payload;
 }
+
+export async function readBuildSettings({
+  apiBaseUrl,
+  siteId,
+  siteSecret,
+  runId,
+  runAttempt,
+  emittedAt,
+  fetchImpl = fetch
+}) {
+  const endpoint = new URL(`/v1/sites/${siteId}/build-settings/read`, apiBaseUrl);
+  if (endpoint.protocol !== 'https:' || endpoint.username !== '' || endpoint.password !== '') {
+    throw new TypeError('apiBaseUrl must use HTTPS without credentials');
+  }
+  const body = Buffer.from(JSON.stringify({ emittedAt, runId, runAttempt }), 'utf8');
+  const response = await fetchImpl(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Gala-Signature': signReconciliationBody(siteId, body, siteSecret)
+    },
+    body
+  });
+  let payload = null;
+  try { payload = await response.json(); } catch { /* Status remains authoritative. */ }
+  if (!response.ok) {
+    throw new ReconciliationTransportError(
+      payload?.message ?? `Build settings read failed with HTTP ${response.status}`,
+      { status: response.status, code: payload?.code ?? null }
+    );
+  }
+  const policy = payload?.paginationPolicy;
+  if (payload?.schemaVersion !== 1
+      || typeof payload.generatedAt !== 'string'
+      || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(payload.generatedAt)
+      || policy == null || Array.isArray(policy) || typeof policy !== 'object'
+      || Object.keys(policy).sort().join(',')
+        !== 'defaultPageSize,maximumPageSize,minimumPageSize'
+      || !['minimumPageSize', 'maximumPageSize', 'defaultPageSize'].every(
+        (field) => Number.isSafeInteger(policy[field])
+      )
+      || policy.minimumPageSize < 1 || policy.maximumPageSize > 100
+      || policy.minimumPageSize > policy.defaultPageSize
+      || policy.defaultPageSize > policy.maximumPageSize) {
+    throw new ReconciliationTransportError('Build settings response is invalid');
+  }
+  return payload;
+}
