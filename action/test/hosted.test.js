@@ -107,9 +107,14 @@ test('engagement snapshot refresh writes one canonical file and is idempotent', 
   const root = await fixture();
   const snapshot = {
     schemaVersion: 1,
-    refreshedAt: '2026-08-11T20:00:00Z',
+    refreshedAt: '2026-08-11T20:00:00.123456789Z',
     articles: {
-      '01K00000000000000000000000': { reactions: 2, comments: 1, views: 9 }
+      '01K00000000000000000000000': {
+        reactions: 2,
+        comments: 1,
+        views: 9,
+        activeReadingSeconds: 120
+      }
     }
   };
   const requests = [];
@@ -147,7 +152,7 @@ test('authoritative build settings refresh writes the build-scoped policy file',
   const root = await fixture();
   const settings = {
     schemaVersion: 1,
-    generatedAt: '2026-08-11T20:00:00Z',
+    generatedAt: '2026-08-11T20:00:00.123456789Z',
     paginationPolicy: { minimumPageSize: 12, maximumPageSize: 100, defaultPageSize: 24 }
   };
   const adapters = createHostedAdapters({

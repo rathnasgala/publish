@@ -338,8 +338,10 @@ test('reads the signed engagement snapshot without placing credentials in the bo
         status: 200,
         json: async () => ({
           schemaVersion: 1,
-          refreshedAt: '2026-08-11T20:00:00Z',
-          articles: { [ARTICLE]: { reactions: 1, comments: 2, views: 3 } }
+          refreshedAt: '2026-08-11T20:00:00.123456789Z',
+          articles: {
+            [ARTICLE]: { reactions: 1, comments: 2, views: 3, activeReadingSeconds: 45 }
+          }
         })
       };
     }
@@ -347,7 +349,51 @@ test('reads the signed engagement snapshot without placing credentials in the bo
   assert.equal(request.url, `https://api.example.com/v1/sites/${SITE}/engagement-snapshot/read`);
   assert.equal(request.body.includes(SECRET), false);
   assert.equal(result.articles[ARTICLE].views, 3);
+  assert.equal(result.articles[ARTICLE].activeReadingSeconds, 45);
   assert.equal(request.headers['Gala-Signature'], signReconciliationBody(SITE, request.body, SECRET));
+});
+
+test('accepts a legacy engagement snapshot during a rolling deployment', async () => {
+  const result = await readEngagementSnapshot({
+    apiBaseUrl: 'https://api.example.com',
+    siteId: SITE,
+    siteSecret: SECRET,
+    runId: 42,
+    runAttempt: 1,
+    emittedAt: '2026-08-11T20:00:00.000Z',
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        schemaVersion: 1,
+        refreshedAt: '2026-08-11T20:00:00Z',
+        articles: { [ARTICLE]: { reactions: 1, comments: 2, views: 3 } }
+      })
+    })
+  });
+  assert.equal(result.articles[ARTICLE].views, 3);
+});
+
+test('rejects invalid active reading time in an engagement snapshot', async () => {
+  await assert.rejects(readEngagementSnapshot({
+    apiBaseUrl: 'https://api.example.com',
+    siteId: SITE,
+    siteSecret: SECRET,
+    runId: 42,
+    runAttempt: 1,
+    emittedAt: '2026-08-11T20:00:00.000Z',
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        schemaVersion: 1,
+        refreshedAt: '2026-08-11T20:00:00Z',
+        articles: {
+          [ARTICLE]: { reactions: 1, comments: 2, views: 3, activeReadingSeconds: -1 }
+        }
+      })
+    })
+  }), /Engagement snapshot response is invalid/);
 });
 
 test('reads authoritative signed build settings without placing credentials in the body', async () => {

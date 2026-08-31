@@ -183,18 +183,25 @@ export async function readEngagementSnapshot({
   }
   if (payload?.schemaVersion !== 1
       || typeof payload.refreshedAt !== 'string'
-      || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(payload.refreshedAt)
+      || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/.test(payload.refreshedAt)
       || payload.articles == null
       || Array.isArray(payload.articles) || typeof payload.articles !== 'object') {
     throw new ReconciliationTransportError('Engagement snapshot response is invalid');
   }
   for (const [articleId, counts] of Object.entries(payload.articles)) {
     if (!/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/.test(articleId)
-        || counts == null || Array.isArray(counts) || typeof counts !== 'object'
-        || Object.keys(counts).sort().join(',') !== 'comments,reactions,views'
-        || !['reactions', 'comments', 'views'].every(
-      (field) => Number.isSafeInteger(counts[field]) && counts[field] >= 0
-    )) {
+        || counts == null || Array.isArray(counts) || typeof counts !== 'object') {
+      throw new ReconciliationTransportError('Engagement snapshot response is invalid');
+    }
+    const keys = Object.keys(counts).sort().join(',');
+    const countFields = keys === 'comments,reactions,views'
+      ? ['reactions', 'comments', 'views']
+      : ['reactions', 'comments', 'views', 'activeReadingSeconds'];
+    if ((keys !== 'comments,reactions,views'
+        && keys !== 'activeReadingSeconds,comments,reactions,views')
+        || !countFields.every(
+          (field) => Number.isSafeInteger(counts[field]) && counts[field] >= 0
+        )) {
       throw new ReconciliationTransportError('Engagement snapshot response is invalid');
     }
   }
