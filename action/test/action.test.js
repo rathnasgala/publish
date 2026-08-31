@@ -378,6 +378,52 @@ test('reads authoritative signed build settings without placing credentials in t
   assert.equal(request.headers['Gala-Signature'], signReconciliationBody(SITE, request.body, SECRET));
 });
 
+test('accepts authoritative build settings timestamps at Java Instant precision', async () => {
+  for (const generatedAt of [
+    '2026-08-11T20:00:00.123456Z',
+    '2026-08-11T20:00:00.123456789Z'
+  ]) {
+    const result = await readBuildSettings({
+      apiBaseUrl: 'https://api.example.com',
+      siteId: SITE,
+      siteSecret: SECRET,
+      runId: 42,
+      runAttempt: 1,
+      emittedAt: '2026-08-11T20:00:00.000Z',
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          schemaVersion: 1,
+          generatedAt,
+          paginationPolicy: { minimumPageSize: 12, maximumPageSize: 100, defaultPageSize: 24 }
+        })
+      })
+    });
+    assert.equal(result.generatedAt, generatedAt);
+  }
+});
+
+test('rejects build settings timestamps beyond Java Instant precision', async () => {
+  await assert.rejects(readBuildSettings({
+    apiBaseUrl: 'https://api.example.com',
+    siteId: SITE,
+    siteSecret: SECRET,
+    runId: 42,
+    runAttempt: 1,
+    emittedAt: '2026-08-11T20:00:00.000Z',
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        schemaVersion: 1,
+        generatedAt: '2026-08-11T20:00:00.1234567890Z',
+        paginationPolicy: { minimumPageSize: 12, maximumPageSize: 100, defaultPageSize: 24 }
+      })
+    })
+  }), /Build settings response is invalid/);
+});
+
 function adapters(overrides = {}) {
   const calls = [];
   return {

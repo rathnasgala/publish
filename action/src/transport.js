@@ -234,7 +234,7 @@ export async function readBuildSettings({
   const policy = payload?.paginationPolicy;
   if (payload?.schemaVersion !== 1
       || typeof payload.generatedAt !== 'string'
-      || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(payload.generatedAt)
+      || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/.test(payload.generatedAt)
       || policy == null || Array.isArray(policy) || typeof policy !== 'object'
       || Object.keys(policy).sort().join(',')
         !== 'defaultPageSize,maximumPageSize,minimumPageSize'
