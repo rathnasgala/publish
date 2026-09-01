@@ -3,7 +3,11 @@ import { createHash } from 'node:crypto';
 import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { readBuildSettings, readEngagementSnapshot } from './transport.js';
+import {
+  readBuildSettings,
+  readEngagementSnapshot,
+  resolveArticleIdentities
+} from './transport.js';
 import { attributionTier } from './attribution.js';
 
 import * as core from '@actions/core';
@@ -28,6 +32,41 @@ function samePublications(current, next) {
 
 const STAGE_PATH = path.join('.gala', 'build', 'deployment-stage.json');
 const NEXT_PUBLICATION_STATE_PATH = path.join('.gala', 'build', 'publication-state.yml');
+const CONTENT_SOURCE = /^content\/posts\/[a-z0-9]+(?:-[a-z0-9]+)*\/index\.[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*\.md$/;
+
+function replaceDeclaredId(source, previousId, resolvedId, file) {
+  const frontmatter = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(source);
+  if (frontmatter == null) throw new Error(`Article frontmatter is missing from ${file}`);
+  const escaped = previousId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const declaration = new RegExp(
+    `^(id:[ \\t]+)(["']?)${escaped}\\2([ \\t]*)$`,
+    'gm'
+  );
+  const matches = [...frontmatter[1].matchAll(declaration)];
+  if (matches.length !== 1) {
+    throw new Error(`Expected exactly one article identity ${previousId} in ${file}`);
+  }
+  const nextFrontmatter = frontmatter[0].replace(
+    declaration,
+    (_match, prefix, quote, suffix) => `${prefix}${quote}${resolvedId}${quote}${suffix}`
+  );
+  return `${nextFrontmatter}${source.slice(frontmatter[0].length)}`;
+}
+
+function mergedIdentityChanges(assigned, repaired) {
+  const changes = new Map();
+  for (const change of assigned ?? []) {
+    changes.set(change.source, { ...change, previousId: null });
+  }
+  for (const change of repaired) {
+    const existing = changes.get(change.source);
+    changes.set(change.source, {
+      ...change,
+      previousId: existing?.previousId ?? change.previousId
+    });
+  }
+  return [...changes.values()].sort((left, right) => left.source.localeCompare(right.source));
+}
 
 function run(command, args, {
   cwd,
@@ -235,6 +274,78 @@ export function createHostedAdapters({
       await atomicJson(target, snapshot);
       return createHash('sha256').update(next).digest('hex');
     },
+    resolveArticleIdentities: async (input, manifest) => {
+      const articles = [];
+      const seen = new Set();
+      for (const post of manifest.posts) {
+        const key = `${post.id}\n${post.slug}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        articles.push({ id: post.id, slug: post.slug });
+      }
+      if (articles.length === 0) return { schemaVersion: 1, repairs: [] };
+      return resolveArticleIdentities({
+        apiBaseUrl: input.apiBaseUrl,
+        siteId: input.siteId,
+        siteSecret: input.siteSecret,
+        runId: input.runId,
+        runAttempt: input.runAttempt,
+        emittedAt: now().toISOString(),
+        articles,
+        fetchImpl
+      });
+    },
+    applyArticleIdentityRepairs: async (input, manifest, resolution) => {
+      const repaired = [];
+      for (const repair of resolution.repairs) {
+        const sources = [...new Set(manifest.posts
+          .filter((post) => post.id === repair.requestedId && post.slug === repair.slug)
+          .map((post) => post.source))];
+        if (sources.length === 0) {
+          throw new Error(`Identity repair has no matching source for ${repair.slug}`);
+        }
+        for (const source of sources) {
+          if (!CONTENT_SOURCE.test(source)) {
+            throw new Error(`Identity repair source is invalid: ${source}`);
+          }
+          const file = path.join(input.root, ...source.split('/'));
+          const metadata = await lstat(file);
+          if (!metadata.isFile() || metadata.isSymbolicLink()) {
+            throw new Error(`Identity repair source must be a regular file: ${source}`);
+          }
+          const current = await readFile(file, 'utf8');
+          const next = replaceDeclaredId(
+            current,
+            repair.requestedId,
+            repair.resolvedId,
+            source
+          );
+          const temporary = `${file}.tmp-${process.pid}`;
+          try {
+            await writeFile(temporary, next, { flag: 'wx' });
+            await rename(temporary, file);
+          } catch (error) {
+            await rm(temporary, { force: true });
+            throw error;
+          }
+          repaired.push({
+            source,
+            previousId: repair.requestedId,
+            id: repair.resolvedId,
+            fileHash: createHash('sha256').update(next).digest('hex')
+          });
+        }
+        const action = repair.reason === 'RESTORED_SITE_ID'
+          ? 'restored this publication\'s existing identity'
+          : 'assigned a new identity';
+        core.warning(
+          `ARTICLE_IDENTITY_REPAIRED: ${repair.slug} used identity ${repair.requestedId}, `
+          + 'which belongs to another publication; '
+          + `Gala ${action} ${repair.resolvedId} and will record the correction automatically.`
+        );
+      }
+      return mergedIdentityChanges(manifest.assignedContentIds, repaired);
+    },
     validateAndBuild: async (input) => {
       const resolvedAttributionTier = await attributionTier({
         root: input.root, siteId: input.siteId, now: now()
@@ -346,7 +457,13 @@ export function createHostedAdapters({
     currentPageCount: async (input) => countHtmlFiles(
       path.resolve(input.root, input.outputDirectory)
     ),
-    stageDeployment: async (input, manifest, floorGuardOverride, engagementSnapshotHash = null) => {
+    stageDeployment: async (
+      input,
+      manifest,
+      floorGuardOverride,
+      engagementSnapshotHash = null,
+      contentIdentityChanges = manifest.assignedContentIds ?? []
+    ) => {
       const current = await readPublicationState(input.root, { allowMissing: true });
       const derived = derivePublicationState({
         current,
@@ -372,7 +489,9 @@ export function createHostedAdapters({
         commitSha: input.commitSha,
         floorGuardOverride,
         engagementSnapshotHash,
-        assignedContentIds: manifest.assignedContentIds ?? []
+        assignedContentIds: contentIdentityChanges.map((change) => (
+          Object.hasOwn(change, 'previousId') ? change : { ...change, previousId: null }
+        ))
       });
     },
     report: async (report) => {

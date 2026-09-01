@@ -46,7 +46,9 @@ async function reconcile(
       })
     });
   } catch (error) {
-    if (error instanceof ReconciliationTransportError && error.status === 409) {
+    if (error instanceof ReconciliationTransportError
+        && error.status === 409
+        && error.code === 'STALE_RUN_IDENTITY') {
       return { stale: true };
     }
     throw error;
@@ -120,8 +122,8 @@ export async function runAction(input, adapters) {
         adapters.warn('ENGAGEMENT_SNAPSHOT_REFRESH_DEFERRED', error);
       }
     }
-    const validation = await adapters.validateAndBuild(input);
-    const manifest = validation.manifest ?? validation;
+    let validation = await adapters.validateAndBuild(input);
+    let manifest = validation.manifest ?? validation;
     report.skippedCount = validation.skippedCount ?? 0;
     report.skipped = validation.skipped ?? [];
     if (operation === ActionOperation.ACKNOWLEDGE_DEPLOYMENT) {
@@ -148,6 +150,29 @@ export async function runAction(input, adapters) {
     }
     if (operation !== ActionOperation.BUILD) throw new TypeError(`Unsupported operation: ${operation}`);
     if (!Object.values(BuildMode).includes(input.mode)) throw new TypeError(`Unsupported mode: ${input.mode}`);
+    let contentIdentityChanges = manifest.assignedContentIds ?? [];
+    if (input.mode === BuildMode.BUILD_AND_DEPLOY) {
+      if (adapters.resolveArticleIdentities == null
+          || adapters.applyArticleIdentityRepairs == null) {
+        throw new Error('Article identity repair is unavailable');
+      }
+      const resolution = await adapters.resolveArticleIdentities(input, manifest);
+      if (resolution.repairs.length > 0) {
+        contentIdentityChanges = await adapters.applyArticleIdentityRepairs(
+          input,
+          manifest,
+          resolution
+        );
+        validation = await adapters.validateAndBuild(input);
+        manifest = validation.manifest ?? validation;
+        const verification = await adapters.resolveArticleIdentities(input, manifest);
+        if (verification.repairs.length > 0) {
+          throw new Error('Article identity repair did not converge after rebuilding the publication');
+        }
+      }
+    }
+    report.skippedCount = validation.skippedCount ?? 0;
+    report.skipped = validation.skipped ?? [];
     const keepalive = await adapters.keepalive(input);
     report.daysSinceLastCommit = keepalive?.daysSinceLastCommit ?? input.daysSinceLastCommit ?? 0;
     report.keepaliveCommitted = keepalive?.committed === true;
@@ -180,7 +205,11 @@ export async function runAction(input, adapters) {
       reason: floor.reason
     } : null;
     await adapters.stageDeployment(
-      input, manifest, floorGuardOverride, engagementSnapshotHash
+      input,
+      manifest,
+      floorGuardOverride,
+      engagementSnapshotHash,
+      contentIdentityChanges
     );
     report.outcome = ActionOutcome.PARTIAL;
     return report;

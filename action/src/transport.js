@@ -6,6 +6,9 @@ const MAX_TRANSMITTED_BYTES = 2 * 1024 * 1024;
 const MAX_EXPANDED_BYTES = 10 * 1024 * 1024;
 const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 const DEFAULT_MAX_ATTEMPTS = 6;
+const ARTICLE_ID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
+const ARTICLE_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const ARTICLE_IDENTITY_REASONS = new Set(['RESTORED_SITE_ID', 'ASSIGNED_NEW_ID']);
 
 async function retryPause(wait, attempt) {
   await wait(1_000 * (2 ** (attempt - 1)));
@@ -254,4 +257,104 @@ export async function readBuildSettings({
     throw new ReconciliationTransportError('Build settings response is invalid');
   }
   return payload;
+}
+
+function validatedIdentityResolution(payload, articles) {
+  if (payload?.schemaVersion !== 1 || !Array.isArray(payload.repairs)) {
+    throw new ReconciliationTransportError('Article identity resolution response is invalid');
+  }
+  const requested = new Set(articles.map(({ id, slug }) => `${id}\n${slug}`));
+  const repaired = new Set();
+  const resolved = new Set();
+  for (const repair of payload.repairs) {
+    if (repair == null || Array.isArray(repair) || typeof repair !== 'object'
+        || Object.keys(repair).sort().join(',') !== 'reason,requestedId,resolvedId,slug'
+        || !ARTICLE_ID.test(repair.requestedId)
+        || !ARTICLE_ID.test(repair.resolvedId)
+        || repair.requestedId === repair.resolvedId
+        || typeof repair.slug !== 'string' || repair.slug.length > 80
+        || !ARTICLE_SLUG.test(repair.slug)
+        || !ARTICLE_IDENTITY_REASONS.has(repair.reason)
+        || !requested.has(`${repair.requestedId}\n${repair.slug}`)
+        || repaired.has(repair.requestedId)
+        || resolved.has(repair.resolvedId)) {
+      throw new ReconciliationTransportError('Article identity resolution response is invalid');
+    }
+    repaired.add(repair.requestedId);
+    resolved.add(repair.resolvedId);
+  }
+  return payload;
+}
+
+export async function resolveArticleIdentities({
+  apiBaseUrl,
+  siteId,
+  siteSecret,
+  runId,
+  runAttempt,
+  emittedAt,
+  articles,
+  fetchImpl = fetch,
+  maxAttempts = DEFAULT_MAX_ATTEMPTS,
+  wait = waitFor
+}) {
+  const endpoint = new URL(`/v1/sites/${siteId}/article-identities/resolve`, apiBaseUrl);
+  if (endpoint.protocol !== 'https:' || endpoint.username !== '' || endpoint.password !== '') {
+    throw new TypeError('apiBaseUrl must use HTTPS without credentials');
+  }
+  if (!Array.isArray(articles) || articles.length < 1 || articles.length > 1000) {
+    throw new TypeError('articles must contain between 1 and 1000 identities');
+  }
+  const ids = new Set();
+  const slugs = new Set();
+  for (const article of articles) {
+    if (article == null || Array.isArray(article) || typeof article !== 'object'
+        || Object.keys(article).sort().join(',') !== 'id,slug'
+        || !ARTICLE_ID.test(article.id)
+        || typeof article.slug !== 'string' || article.slug.length > 80
+        || !ARTICLE_SLUG.test(article.slug)
+        || ids.has(article.id) || slugs.has(article.slug)) {
+      throw new TypeError('articles contain an invalid or duplicate identity');
+    }
+    ids.add(article.id);
+    slugs.add(article.slug);
+  }
+  const body = Buffer.from(JSON.stringify({ emittedAt, runId, runAttempt, articles }), 'utf8');
+  if (body.length > 128 * 1024) {
+    throw new ReconciliationTransportError('Article identity resolution request exceeds 128 KiB', {
+      status: 413,
+      code: 'PAYLOAD_TOO_LARGE'
+    });
+  }
+  const headers = {
+    'Content-Type': 'application/json',
+    'Gala-Signature': signReconciliationBody(siteId, body, siteSecret)
+  };
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    let response;
+    try {
+      response = await fetchImpl(endpoint, { method: 'POST', headers, body });
+    } catch {
+      if (attempt < maxAttempts) {
+        await retryPause(wait, attempt);
+        continue;
+      }
+      throw new ReconciliationTransportError(
+        'Article identity resolution API is unreachable',
+        { code: 'UNREACHABLE' }
+      );
+    }
+    let payload = null;
+    try { payload = await response.json(); } catch { /* Status remains authoritative. */ }
+    if (response.ok) return validatedIdentityResolution(payload, articles);
+    if (RETRYABLE_STATUS.has(response.status) && attempt < maxAttempts) {
+      await retryPause(wait, attempt);
+      continue;
+    }
+    throw new ReconciliationTransportError(
+      payload?.message ?? `Article identity resolution failed with HTTP ${response.status}`,
+      { status: response.status, code: payload?.code ?? null }
+    );
+  }
+  throw new ReconciliationTransportError('Article identity resolution attempts exhausted');
 }

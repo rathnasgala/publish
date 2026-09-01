@@ -9,6 +9,7 @@ import { createHostedAdapters } from '../src/hosted.js';
 const SHA = 'a'.repeat(40);
 const RECORDED_SHA = 'b'.repeat(40);
 const ASSIGNED_ID = '01K00000000000000000000000';
+const REPAIRED_ID = '01K00000000000000000000001';
 const ASSIGNED_PATH = 'content/posts/hello/index.en.md';
 
 async function fixture() {
@@ -176,6 +177,71 @@ test('authoritative build settings refresh writes the build-scoped policy file',
   );
 });
 
+test('article identity repair rewrites every language variant and stages the guarded correction', async () => {
+  const root = await fixture();
+  const tamilPath = path.join(root, 'content', 'posts', 'hello', 'index.ta.md');
+  await writeFile(tamilPath, `---
+id: '${ASSIGNED_ID}'
+title: வணக்கம்
+publishAfterDate: 2026-08-10
+language: ta
+---
+
+வணக்கம்.
+`);
+  const adapters = createHostedAdapters({ now: () => new Date('2026-08-11T20:00:00Z') });
+  const manifest = {
+    schemaVersion: 1,
+    evaluationDate: '2026-08-11',
+    assignedContentIds: [],
+    posts: [
+      { id: ASSIGNED_ID, slug: 'hello', language: 'en', source: ASSIGNED_PATH },
+      {
+        id: ASSIGNED_ID,
+        slug: 'hello',
+        language: 'ta',
+        source: 'content/posts/hello/index.ta.md'
+      }
+    ]
+  };
+
+  const changes = await adapters.applyArticleIdentityRepairs(input(root), manifest, {
+    schemaVersion: 1,
+    repairs: [{
+      requestedId: ASSIGNED_ID,
+      resolvedId: REPAIRED_ID,
+      slug: 'hello',
+      reason: 'RESTORED_SITE_ID'
+    }]
+  });
+
+  assert.match(
+    await readFile(path.join(root, ASSIGNED_PATH), 'utf8'),
+    new RegExp(`^id: ${REPAIRED_ID}$`, 'm')
+  );
+  assert.match(await readFile(tamilPath, 'utf8'), new RegExp(`^id: '${REPAIRED_ID}'$`, 'm'));
+  assert.deepEqual(changes.map(({ source, previousId, id }) => ({ source, previousId, id })), [
+    { source: ASSIGNED_PATH, previousId: ASSIGNED_ID, id: REPAIRED_ID },
+    {
+      source: 'content/posts/hello/index.ta.md',
+      previousId: ASSIGNED_ID,
+      id: REPAIRED_ID
+    }
+  ]);
+  assert.equal(changes.every(({ fileHash }) => /^[a-f0-9]{64}$/.test(fileHash)), true);
+
+  const repairedManifest = {
+    ...manifest,
+    posts: manifest.posts.map((post) => ({ ...post, id: REPAIRED_ID }))
+  };
+  await adapters.stageDeployment(input(root), repairedManifest, null, null, changes);
+  const stage = JSON.parse(await readFile(
+    path.join(root, '.gala', 'build', 'deployment-stage.json'),
+    'utf8'
+  ));
+  assert.deepEqual(stage.assignedContentIds, changes);
+});
+
 test('an unchanged publication keeps its deployed stamp so nothing is recorded', async () => {
   // The reported defect: a site nobody was writing to produced a commit a day. The stamp was
   // the only difference, so a commit was written, and that commit became the next run's HEAD -
@@ -267,7 +333,10 @@ test('deployment stage is commit-bound and carries a floor override into acknowl
     mode: 'build-only'
   }));
   assert.deepEqual(acknowledged.floorGuardOverride, override);
-  assert.deepEqual(acknowledged.assignedContentIds, assignedContentIds);
+  assert.deepEqual(acknowledged.assignedContentIds, assignedContentIds.map((assigned) => ({
+    ...assigned,
+    previousId: null
+  })));
 
   await assert.rejects(
     () => adapters.validateAndBuild(input(root, {

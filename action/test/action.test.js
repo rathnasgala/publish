@@ -14,6 +14,7 @@ import {
   ReconciliationTransportError,
   readBuildSettings,
   readEngagementSnapshot,
+  resolveArticleIdentities,
   sendBuildFailure,
   sendReconciliation,
   signReconciliationBody
@@ -21,6 +22,7 @@ import {
 
 const SITE = '01K00000000000000000000010';
 const ARTICLE = '01K00000000000000000000000';
+const REPAIRED_ARTICLE = '01K00000000000000000000001';
 const SHA = 'a'.repeat(40);
 const SECRET = '0123456789abcdef0123456789abcdef';
 
@@ -269,6 +271,70 @@ test('rejects insecure API origins before transmitting the site secret signature
   assert.equal(called, false);
 });
 
+test('resolves article identities through a signed bounded request', async () => {
+  let request;
+  const result = await resolveArticleIdentities({
+    apiBaseUrl: 'https://api.example.com',
+    siteId: SITE,
+    siteSecret: SECRET,
+    runId: 42,
+    runAttempt: 1,
+    emittedAt: '2026-08-11T20:00:00.000Z',
+    articles: [{ id: ARTICLE, slug: 'post' }],
+    fetchImpl: async (url, options) => {
+      request = { url: String(url), ...options };
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          schemaVersion: 1,
+          repairs: [{
+            requestedId: ARTICLE,
+            resolvedId: REPAIRED_ARTICLE,
+            slug: 'post',
+            reason: 'RESTORED_SITE_ID'
+          }]
+        })
+      };
+    }
+  });
+
+  assert.equal(request.url, `https://api.example.com/v1/sites/${SITE}/article-identities/resolve`);
+  assert.deepEqual(JSON.parse(request.body), {
+    emittedAt: '2026-08-11T20:00:00.000Z',
+    runId: 42,
+    runAttempt: 1,
+    articles: [{ id: ARTICLE, slug: 'post' }]
+  });
+  assert.equal(request.headers['Gala-Signature'], signReconciliationBody(SITE, request.body, SECRET));
+  assert.equal(result.repairs[0].resolvedId, REPAIRED_ARTICLE);
+});
+
+test('rejects an identity repair that was not requested by the build', async () => {
+  await assert.rejects(resolveArticleIdentities({
+    apiBaseUrl: 'https://api.example.com',
+    siteId: SITE,
+    siteSecret: SECRET,
+    runId: 42,
+    runAttempt: 1,
+    emittedAt: '2026-08-11T20:00:00.000Z',
+    articles: [{ id: ARTICLE, slug: 'post' }],
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        schemaVersion: 1,
+        repairs: [{
+          requestedId: '01K00000000000000000000009',
+          resolvedId: REPAIRED_ARTICLE,
+          slug: 'post',
+          reason: 'ASSIGNED_NEW_ID'
+        }]
+      })
+    })
+  }), /response is invalid/);
+});
+
 test('signs the exact bounded build-failure body for the dedicated route', async () => {
   let request;
   const report = {
@@ -483,6 +549,8 @@ function adapters(overrides = {}) {
       commitMessage: async () => { calls.push('commit-message'); return ''; },
       previousPageCount: async () => { calls.push('previous-count'); return null; },
       currentPageCount: async () => { calls.push('current-count'); return 1; },
+      resolveArticleIdentities: async () => ({ schemaVersion: 1, repairs: [] }),
+      applyArticleIdentityRepairs: async () => [],
       stageDeployment: async () => { calls.push('stage-deployment'); },
       sendReconciliation: async () => { calls.push('reconcile'); return { noOp: false }; },
       sendBuildFailure: async () => { calls.push('build-failure'); },
@@ -569,13 +637,75 @@ test('owned deployment stages only after the floor passes and leaves deployment 
   ]);
 });
 
+test('owned deployment repairs a foreign article identity, rebuilds, and stages the correction', async () => {
+  const sequence = [];
+  const repairedManifest = manifest({ id: REPAIRED_ARTICLE });
+  let builds = 0;
+  let resolutions = 0;
+  let staged;
+  const identityChanges = [{
+    source: 'content/posts/post/index.en.md',
+    previousId: ARTICLE,
+    id: REPAIRED_ARTICLE,
+    fileHash: 'b'.repeat(64)
+  }];
+  const fixture = adapters({
+    validateAndBuild: async () => {
+      sequence.push('build');
+      builds += 1;
+      return builds === 1 ? manifest() : repairedManifest;
+    },
+    resolveArticleIdentities: async (_input, build) => {
+      sequence.push(`resolve:${build.posts[0].id}`);
+      resolutions += 1;
+      return resolutions === 1
+        ? {
+            schemaVersion: 1,
+            repairs: [{
+              requestedId: ARTICLE,
+              resolvedId: REPAIRED_ARTICLE,
+              slug: 'post',
+              reason: 'RESTORED_SITE_ID'
+            }]
+          }
+        : { schemaVersion: 1, repairs: [] };
+    },
+    applyArticleIdentityRepairs: async () => {
+      sequence.push('repair');
+      return identityChanges;
+    },
+    keepalive: async () => { sequence.push('keepalive'); },
+    stageDeployment: async (_input, build, _override, _snapshot, changes) => {
+      sequence.push('stage');
+      staged = { build, changes };
+    }
+  });
+
+  await runAction(input({ mode: BuildMode.BUILD_AND_DEPLOY }), fixture.value);
+
+  assert.deepEqual(sequence, [
+    'build',
+    `resolve:${ARTICLE}`,
+    'repair',
+    'build',
+    `resolve:${REPAIRED_ARTICLE}`,
+    'keepalive',
+    'stage'
+  ]);
+  assert.equal(staged.build.posts[0].id, REPAIRED_ARTICLE);
+  assert.deepEqual(staged.changes, identityChanges);
+});
+
 test('acknowledgement pins no-op and stale outcomes but fails exhausted transport', async () => {
   const noOp = adapters({ sendReconciliation: async () => ({ noOp: true }) });
   assert.equal((await runAction(input({ operation: ActionOperation.ACKNOWLEDGE_DEPLOYMENT }), noOp.value)).outcome, 'NO_OP');
 
   const stale = adapters({
     sendReconciliation: async () => {
-      throw new ReconciliationTransportError('stale', { status: 409, code: 'STALE_RUN' });
+      throw new ReconciliationTransportError('stale', {
+        status: 409,
+        code: 'STALE_RUN_IDENTITY'
+      });
     }
   });
   assert.equal(
@@ -594,6 +724,24 @@ test('acknowledgement pins no-op and stale outcomes but fails exhausted transpor
   );
   assert.ok(unavailable.calls.includes('build-failure'));
   assert.ok(unavailable.calls.includes('report:FAILED'));
+});
+
+test('acknowledgement does not misclassify an article identity conflict as a stale run', async () => {
+  const conflict = adapters({
+    sendReconciliation: async () => {
+      throw new ReconciliationTransportError('identity conflict', {
+        status: 409,
+        code: 'ARTICLE_IDENTITY_CONFLICT'
+      });
+    }
+  });
+
+  await assert.rejects(
+    runAction(input({ operation: ActionOperation.ACKNOWLEDGE_DEPLOYMENT }), conflict.value),
+    /identity conflict/
+  );
+  assert.ok(conflict.calls.includes('build-failure'));
+  assert.ok(conflict.calls.includes('report:FAILED'));
 });
 
 test('reports a workflow-owned deployment failure without rebuilding the publication', async () => {

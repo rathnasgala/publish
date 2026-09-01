@@ -304,10 +304,13 @@ jobs:
           trap cleanup EXIT
           node - "$stage" > "$assigned_paths_file" <<'NODE'
           const { createHash } = require('node:crypto');
+          const { execFileSync } = require('node:child_process');
           const { lstatSync, readFileSync } = require('node:fs');
           const stagePath = process.argv[2];
           const stage = JSON.parse(readFileSync(stagePath, 'utf8'));
-          if (stage.schemaVersion !== 1 || stage.commitSha !== process.env.GALA_DEPLOYED_COMMIT_SHA
+          if (stage.schemaVersion !== 1
+              || !/^[a-f0-9]{40}$/.test(stage.commitSha)
+              || stage.commitSha !== process.env.GALA_DEPLOYED_COMMIT_SHA
               || !Array.isArray(stage.assignedContentIds)
               || !(stage.engagementSnapshotHash === null
                 || /^[a-f0-9]{64}$/.test(stage.engagementSnapshotHash))) {
@@ -327,8 +330,12 @@ jobs:
           const seen = new Set();
           for (const assigned of stage.assignedContentIds) {
             if (assigned == null
+                || Object.keys(assigned).sort().join(',') !== 'fileHash,id,previousId,source'
                 || !/^content\/posts\/[a-z0-9]+(?:-[a-z0-9]+)*\/index\.[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*\.md$/.test(assigned.source)
                 || !/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/.test(assigned.id)
+                || !(assigned.previousId === null
+                  || (/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/.test(assigned.previousId)
+                    && assigned.previousId !== assigned.id))
                 || !/^[a-f0-9]{64}$/.test(assigned.fileHash)
                 || seen.has(assigned.source)) {
               throw new Error('Deployment stage contains an invalid assigned-ID entry');
@@ -341,9 +348,32 @@ jobs:
             if (createHash('sha256').update(bytes).digest('hex') !== assigned.fileHash) {
               throw new Error(`Assigned-ID source changed after deployment: ${assigned.source}`);
             }
-            const prefix = bytes.toString('utf8').match(/^\uFEFF?---\r?\nid: ([^\r\n]+)\r?\n/);
-            if (prefix?.[1] !== assigned.id) {
+            const text = bytes.toString('utf8');
+            const frontmatter = /^\uFEFF?---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/.exec(text);
+            const escaped = assigned.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const declaration = new RegExp(
+              `^(id:[ \\t]+)(["']?)${escaped}\\2([ \\t]*)(\\r?\\n)`,
+              'gm'
+            );
+            const declarations = frontmatter == null ? [] : [...frontmatter[0].matchAll(declaration)];
+            if (declarations.length !== 1) {
               throw new Error(`Assigned-ID source no longer contains its deployed ULID: ${assigned.source}`);
+            }
+            const restored = text.replace(
+              declaration,
+              assigned.previousId === null
+                ? ''
+                : (_match, prefix, quote, suffix, newline) => (
+                  `${prefix}${quote}${assigned.previousId}${quote}${suffix}${newline}`
+                )
+            );
+            const deployed = execFileSync(
+              'git',
+              ['show', `${stage.commitSha}:${assigned.source}`],
+              { encoding: 'utf8' }
+            );
+            if (restored !== deployed) {
+              throw new Error(`Assigned-ID source changed beyond its identity: ${assigned.source}`);
             }
             seen.add(assigned.source);
             process.stdout.write(`${assigned.source}\n`);

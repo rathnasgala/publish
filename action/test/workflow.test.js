@@ -195,6 +195,9 @@ test('state persistence is post-deployment, secret-blind, and preserves caller H
   assert.match(persistence, /git push origin "\$commit:refs\/heads\/\$GALA_SOURCE_BRANCH"/);
   assert.match(persistence, /\.gala\/build\/deployment-stage\.json/);
   assert.match(persistence, /assignedContentIds/);
+  assert.match(persistence, /previousId/);
+  assert.match(persistence, /Assigned-ID source changed beyond its identity/);
+  assert.match(persistence, /execFileSync/);
   assert.match(persistence, /engagementSnapshotHash/);
   assert.match(persistence, /Engagement snapshot changed after deployment/);
   assert.match(persistence, /git update-index --add --cacheinfo "100644,\$snapshot_blob,.engagement-snapshot.json"/);
