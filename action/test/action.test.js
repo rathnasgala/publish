@@ -492,6 +492,49 @@ test('reads authoritative signed build settings without placing credentials in t
   assert.equal(request.headers['Gala-Signature'], signReconciliationBody(SITE, request.body, SECRET));
 });
 
+test('normalizes contributor credits absent from a rolling schema-v1 API response', async () => {
+  const result = await readBuildSettings({
+    apiBaseUrl: 'https://api.example.com',
+    siteId: SITE,
+    siteSecret: SECRET,
+    runId: 42,
+    runAttempt: 1,
+    emittedAt: '2026-08-11T20:00:00.000Z',
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        schemaVersion: 1,
+        generatedAt: '2026-08-11T20:00:00Z',
+        paginationPolicy: { minimumPageSize: 12, maximumPageSize: 100, defaultPageSize: 24 }
+      })
+    })
+  });
+
+  assert.deepEqual(result.contributorCredits, {});
+});
+
+test('rejects explicitly malformed contributor credits', async () => {
+  await assert.rejects(readBuildSettings({
+    apiBaseUrl: 'https://api.example.com',
+    siteId: SITE,
+    siteSecret: SECRET,
+    runId: 42,
+    runAttempt: 1,
+    emittedAt: '2026-08-11T20:00:00.000Z',
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        schemaVersion: 1,
+        generatedAt: '2026-08-11T20:00:00Z',
+        paginationPolicy: { minimumPageSize: 12, maximumPageSize: 100, defaultPageSize: 24 },
+        contributorCredits: null
+      })
+    })
+  }), /Build settings response is invalid/);
+});
+
 test('accepts authoritative build settings timestamps at Java Instant precision', async () => {
   for (const generatedAt of [
     '2026-08-11T20:00:00.123456Z',

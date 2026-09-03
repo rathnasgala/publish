@@ -242,7 +242,9 @@ export async function readBuildSettings({
     );
   }
   const policy = payload?.paginationPolicy;
-  const contributorCredits = payload?.contributorCredits;
+  const contributorCredits = payload != null && Object.hasOwn(payload, 'contributorCredits')
+    ? payload.contributorCredits
+    : {};
   if (payload?.schemaVersion !== 1
       || typeof payload.generatedAt !== 'string'
       || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/.test(payload.generatedAt)
@@ -258,7 +260,9 @@ export async function readBuildSettings({
       || !validContributorCredits(contributorCredits)) {
     throw new ReconciliationTransportError('Build settings response is invalid');
   }
-  return payload;
+  return Object.hasOwn(payload, 'contributorCredits')
+    ? payload
+    : { ...payload, contributorCredits };
 }
 
 function validContributorCredits(value) {
