@@ -116,7 +116,8 @@ test('groups variants while metadata remains independent from the body hash', ()
     tags: ['platform'],
     coverImage: 'cover.png',
     canonicalUrl: 'https://example.com/en/post/',
-    frontmatter: { title: 'Raw title', publishAfterDate: '2026-08-10', unknown: true }
+    frontmatter: { title: 'Raw title', publishAfterDate: '2026-08-10', unknown: true },
+    markdownBody: 'Body\r\n'
   });
 });
 
@@ -479,7 +480,8 @@ test('reads authoritative signed build settings without placing credentials in t
         json: async () => ({
           schemaVersion: 1,
           generatedAt: '2026-08-11T20:00:00Z',
-          paginationPolicy: { minimumPageSize: 12, maximumPageSize: 100, defaultPageSize: 24 }
+          paginationPolicy: { minimumPageSize: 12, maximumPageSize: 100, defaultPageSize: 24 },
+          contributorCredits: { post: { authors: ['Writer'], editors: ['Editor'] } }
         })
       };
     }
@@ -508,7 +510,8 @@ test('accepts authoritative build settings timestamps at Java Instant precision'
         json: async () => ({
           schemaVersion: 1,
           generatedAt,
-          paginationPolicy: { minimumPageSize: 12, maximumPageSize: 100, defaultPageSize: 24 }
+          paginationPolicy: { minimumPageSize: 12, maximumPageSize: 100, defaultPageSize: 24 },
+          contributorCredits: {}
         })
       })
     });
@@ -530,7 +533,8 @@ test('rejects build settings timestamps beyond Java Instant precision', async ()
       json: async () => ({
         schemaVersion: 1,
         generatedAt: '2026-08-11T20:00:00.1234567890Z',
-        paginationPolicy: { minimumPageSize: 12, maximumPageSize: 100, defaultPageSize: 24 }
+        paginationPolicy: { minimumPageSize: 12, maximumPageSize: 100, defaultPageSize: 24 },
+        contributorCredits: {}
       })
     })
   }), /Build settings response is invalid/);

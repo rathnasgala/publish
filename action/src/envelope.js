@@ -22,6 +22,7 @@ function normalizedVariant(post, configurations = []) {
     coverImage: post.frontmatter?.coverImage ?? null,
     canonicalUrl: post.canonicalUrl,
     frontmatter: raw,
+    markdownBody: post.contentBody,
     ...(post.prismSourceHash == null ? {} : {
       prismSourceHash: post.prismSourceHash,
       prismHashContract: post.prismHashContract,

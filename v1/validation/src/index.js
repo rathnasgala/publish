@@ -218,6 +218,41 @@ export function validatePost(data, { today }) {
     errors.push(`Language ${shown(data.language)} is invalid. Use a standard language code such as "en", "fr", or "en-US".`);
   }
 
+  if (data.contentType != null && !['article', 'technical'].includes(data.contentType)) {
+    errors.push('"contentType" must be "article" or "technical".');
+  }
+
+  if (data.sources != null) {
+    if (!Array.isArray(data.sources) || data.sources.length === 0) {
+      errors.push('Sources must be a non-empty YAML list of credential-free HTTPS URLs.');
+    } else {
+      data.sources.forEach((source, index) => {
+        try {
+          absoluteHttpsUrl(source, `Source ${index + 1}`);
+        } catch (error) {
+          errors.push(error.message);
+        }
+      });
+    }
+  }
+
+  if (data.faq != null) {
+    if (!Array.isArray(data.faq) || data.faq.length === 0 || data.faq.length > 20) {
+      errors.push('FAQ must be a YAML list containing between 1 and 20 question/answer mappings.');
+    } else {
+      data.faq.forEach((entry, index) => {
+        const unknown = entry != null && !Array.isArray(entry) && typeof entry === 'object'
+          ? Object.keys(entry).filter((key) => !['question', 'answer'].includes(key)) : [];
+        if (entry == null || Array.isArray(entry) || typeof entry !== 'object' || unknown.length > 0
+            || typeof entry.question !== 'string' || entry.question.trim() === ''
+            || typeof entry.answer !== 'string' || entry.answer.trim() === ''
+            || [...entry.question].length > 300 || [...entry.answer].length > 2000) {
+          errors.push(`FAQ entry ${index + 1} must contain only a non-empty question (at most 300 characters) and answer (at most 2000 characters).`);
+        }
+      });
+    }
+  }
+
   if (data.tags != null) {
     if (!Array.isArray(data.tags)) {
       errors.push('Tags must be a YAML list, for example "tags: [field-notes, writing]".');
@@ -1035,10 +1070,14 @@ export async function validateContent({ root, today, now, configPath, timezone }
     } else {
       errors.push(...parsed.errors);
     }
-    const warnings = parsed.errors.length === 0
-        && (typeof parsed.data.description !== 'string' || parsed.data.description.trim() === '')
-      ? ['Summary is missing. Gala will use the first 160 characters of the article in search and link previews. Add "description" to control that text.']
-      : [];
+    const warnings = [];
+    if (parsed.errors.length === 0
+        && (typeof parsed.data.description !== 'string' || parsed.data.description.trim() === '')) {
+      warnings.push('Summary is missing. Gala will use the first 160 characters of the article in search and link previews. Add "description" to control that text.');
+    }
+    if (parsed.errors.length === 0 && !/^>\s*\[!ANSWER]/m.test(parsed.body)) {
+      warnings.push('Direct answer block is missing. Add a short `> [!ANSWER]` block near the beginning when the article answers a specific question.');
+    }
     return { file, data: parsed.data, body: parsed.body, media, errors, warnings };
   }));
   const metadata = results.map(({ file, data }) => ({

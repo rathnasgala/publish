@@ -242,6 +242,7 @@ export async function readBuildSettings({
     );
   }
   const policy = payload?.paginationPolicy;
+  const contributorCredits = payload?.contributorCredits;
   if (payload?.schemaVersion !== 1
       || typeof payload.generatedAt !== 'string'
       || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/.test(payload.generatedAt)
@@ -253,10 +254,23 @@ export async function readBuildSettings({
       )
       || policy.minimumPageSize < 1 || policy.maximumPageSize > 100
       || policy.minimumPageSize > policy.defaultPageSize
-      || policy.defaultPageSize > policy.maximumPageSize) {
+      || policy.defaultPageSize > policy.maximumPageSize
+      || !validContributorCredits(contributorCredits)) {
     throw new ReconciliationTransportError('Build settings response is invalid');
   }
   return payload;
+}
+
+function validContributorCredits(value) {
+  if (value == null || Array.isArray(value) || typeof value !== 'object') return false;
+  return Object.entries(value).every(([slug, credits]) =>
+    /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)
+      && credits != null && !Array.isArray(credits) && typeof credits === 'object'
+      && Object.keys(credits).sort().join(',') === 'authors,editors'
+      && ['authors', 'editors'].every((field) => Array.isArray(credits[field])
+        && credits[field].length <= 50
+        && credits[field].every((name) => typeof name === 'string'
+          && name.trim() !== '' && [...name].length <= 120)));
 }
 
 function validatedIdentityResolution(payload, articles) {

@@ -10,6 +10,11 @@ WORK="$(mktemp -d)"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT="$HERE/../scripts/self-update.mjs"
 REAL_NPM="$(command -v npm)"
+REAL_GIT="${GALA_TEST_GIT:-/usr/bin/git}"
+if [ ! -x "$REAL_GIT" ]; then
+  echo "system Git not found at $REAL_GIT - set GALA_TEST_GIT to run this."
+  exit 1
+fi
 # The theme payload is staged from site-template, which sits beside this repository in a
 # workspace checkout. Skipped rather than failed when it is not there.
 TEMPLATE="${GALA_SITE_TEMPLATE:-$HERE/../../../site-template}"
@@ -65,6 +70,28 @@ if [ "\$1" = "pack" ]; then cp "$WORK/theme-\$GALA_FAKE_LATEST.tgz" "\$4/theme.t
 exit 0
 SHIM
   chmod +x "$WORK/bin/npm"
+  export GALA_TEST_GIT_ROOT="$WORK" GALA_TEST_REAL_GIT="$REAL_GIT"
+  cat > "$WORK/bin/git" <<'SHIM'
+#!/usr/bin/env bash
+set -uo pipefail
+root="${GALA_TEST_GIT_ROOT:?}"
+real_git="${GALA_TEST_REAL_GIT:?}"
+allowed=false
+case "$PWD" in
+  "$root"|"$root"/*) allowed=true ;;
+esac
+for argument in "$@"; do
+  case "$argument" in
+    "$root"|"$root"/*|--git-dir="$root"|--git-dir="$root"/*) allowed=true ;;
+  esac
+done
+if [ "$allowed" != true ]; then
+  echo "test Git refused a path outside $root" >&2
+  exit 2
+fi
+exec "$real_git" "$@"
+SHIM
+  chmod +x "$WORK/bin/git"
 }
 
 # ---------------------------------------------------------------- a publication

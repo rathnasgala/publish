@@ -11,6 +11,11 @@ on:
         description: build-only or build-and-deploy.
         required: true
         type: string
+      attest-build:
+        description: Generate GitHub build provenance for the deployed site manifest.
+        required: false
+        default: false
+        type: boolean
       site-id:
         description: Canonical Gala site ULID.
         required: true
@@ -95,6 +100,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   publish:
@@ -163,6 +170,35 @@ jobs:
           recorded-state-sha: ${{ inputs.recorded-state-sha }}
           run-id: ${{ github.run_id }}
           run-attempt: ${{ github.run_attempt }}
+
+      - name: Write the deployed-site digest manifest
+        if: inputs.operation == 'build' && inputs.attest-build && steps.primary.outcome == 'success'
+        env:
+          GALA_OUTPUT_DIRECTORY: ${{ inputs.output-directory }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          workspace="$(realpath -- "$GITHUB_WORKSPACE")"
+          output="$(realpath -- "$GALA_OUTPUT_DIRECTORY")"
+          case "$output" in
+            "$workspace"/*) ;;
+            *) echo "Output directory escapes the checkout" >&2; exit 1 ;;
+          esac
+          manifest="$output/.well-known/gala-build-manifest.sha256"
+          mkdir -p -- "$(dirname -- "$manifest")"
+          find "$output" -type f ! -path "$manifest" -print0 \
+            | sort -z \
+            | while IFS= read -r -d '' file; do
+                digest="$(sha256sum "$file" | cut -d ' ' -f 1)"
+                relative="${file#"$output"/}"
+                printf '%s  %s\n' "$digest" "$relative"
+              done > "$manifest"
+
+      - name: Attest the deployed-site digest manifest
+        if: inputs.operation == 'build' && inputs.attest-build && steps.primary.outcome == 'success'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: ${{ inputs.output-directory }}/.well-known/gala-build-manifest.sha256
 
       - name: Persist refreshed build-only engagement snapshot
         if: inputs.operation == 'build' && inputs.mode == 'build-only' && steps.primary.outcome == 'success'

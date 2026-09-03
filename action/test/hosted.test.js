@@ -154,7 +154,8 @@ test('authoritative build settings refresh writes the build-scoped policy file',
   const settings = {
     schemaVersion: 1,
     generatedAt: '2026-08-11T20:00:00.123456789Z',
-    paginationPolicy: { minimumPageSize: 12, maximumPageSize: 100, defaultPageSize: 24 }
+    paginationPolicy: { minimumPageSize: 12, maximumPageSize: 100, defaultPageSize: 24 },
+    contributorCredits: { post: { authors: ['Writer'], editors: [] } }
   };
   const adapters = createHostedAdapters({
     now: () => new Date('2026-08-11T20:00:00Z'),

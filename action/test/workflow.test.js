@@ -134,6 +134,16 @@ test('workflow uses the published bundle and keeps deployment out of the signing
   assert.match(source, /recorded-state-sha: \$\{\{ github\.sha \}\}/);
 });
 
+test('build attestation is opt-in, digest-scoped, and immutable-action pinned', () => {
+  assert.match(source, /^      attest-build:\n        description:[^\n]+\n        required: false\n        default: false\n        type: boolean$/m);
+  assert.match(source, /^  id-token: write$/m);
+  assert.match(source, /^  attestations: write$/m);
+  assert.match(source, /if: inputs\.operation == 'build' && inputs\.attest-build && steps\.primary\.outcome == 'success'/);
+  assert.match(source, /\.well-known\/gala-build-manifest\.sha256/);
+  assert.match(source, /uses: actions\/attest@[0-9a-f]{40} # v4/);
+  assert.match(source, /subject-path: \$\{\{ inputs\.output-directory \}\}\/\.well-known\/gala-build-manifest\.sha256/);
+});
+
 test('one build overlays the verified framework before install and records it only after deployment', () => {
   const prepare = source.indexOf('- name: Prepare the verified framework release');
   const install = source.indexOf('- name: Install the author repository dependencies');

@@ -393,6 +393,46 @@ test('accepts the documented valid content contract', () => {
   assert.deepEqual(validatePost(valid, { today }), []);
 });
 
+test('accepts explicit AI-readable article metadata', () => {
+  assert.deepEqual(validatePost({
+    ...valid,
+    contentType: 'technical',
+    sources: [
+      'https://docs.example.com/reference',
+      'https://research.example.com/paper?version=2#results'
+    ],
+    faq: [{
+      question: 'What does this feature do?',
+      answer: 'It publishes the author-written answer as visible content and structured data.'
+    }]
+  }, { today }), []);
+});
+
+test('rejects invalid AI-readable article metadata with actionable errors', () => {
+  assert.deepEqual(validatePost({
+    ...valid,
+    contentType: 'tutorial',
+    sources: ['http://insecure.example.com', 'https://user:secret@example.com/reference'],
+    faq: [{ question: '', answer: 'Missing question' }, {
+      question: 'Unexpected shape', answer: 'Answer', hidden: true
+    }]
+  }, { today }), [
+    '"contentType" must be "article" or "technical".',
+    'Source 1 "http://insecure.example.com" is invalid. Use HTTPS and remove any username or password from the URL.',
+    'Source 2 "https://user:secret@example.com/reference" is invalid. Use HTTPS and remove any username or password from the URL.',
+    'FAQ entry 1 must contain only a non-empty question (at most 300 characters) and answer (at most 2000 characters).',
+    'FAQ entry 2 must contain only a non-empty question (at most 300 characters) and answer (at most 2000 characters).'
+  ]);
+  assert.deepEqual(validatePost({ ...valid, sources: [] }, { today }), [
+    'Sources must be a non-empty YAML list of credential-free HTTPS URLs.'
+  ]);
+  assert.deepEqual(validatePost({ ...valid, faq: Array.from({ length: 21 }, () => ({
+    question: 'Question?', answer: 'Answer.'
+  })) }, { today }), [
+    'FAQ must be a YAML list containing between 1 and 20 question/answer mappings.'
+  ]);
+});
+
 test('reports required fields by name', () => {
   assert.deepEqual(validatePost({}, { today }), [
     'Title is missing. Add a non-empty "title" value to the post frontmatter.',
